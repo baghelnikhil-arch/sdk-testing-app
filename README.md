@@ -267,11 +267,43 @@ tab: those ids live in the previous account's Drive. For the same reason
 `findEnabledApp` matches on `auth_id` as well as service, so a second account
 gets its own `script_id` rather than reusing the first one's.
 
+## Deploying
+
+The storefront itself deploys anywhere with no configuration. The integrations
+need two things.
+
+**1. Durable storage.** Serverless filesystems are read-only and instances share
+nothing, so `.data/` cannot be used there — writing to it fails with
+`ENOENT: no such file or directory, mkdir '/var/task/.data'`. Add a Redis/KV
+integration (Vercel → Storage → Upstash works) so these are set:
+
+```bash
+KV_REST_API_URL=...      # UPSTASH_REDIS_REST_URL is also accepted
+KV_REST_API_TOKEN=...    # UPSTASH_REDIS_REST_TOKEN is also accepted
+```
+
+[`src/lib/kv.ts`](src/lib/kv.ts) picks the backend from the environment: Redis
+over HTTP when those exist, a JSON file otherwise. Nothing above it changes.
+Without storage on a serverless host the settings page explains the problem
+instead of erroring, and the shop keeps working — the integration is additive.
+
+**2. The viaSocket secret.** Set `VIASOCKET_EMBED_SECRET` in the host's
+environment variables, never in a committed file.
+
+`APP_PUBLIC_URL` is detected automatically on Vercel from
+`VERCEL_PROJECT_PRODUCTION_URL`, so live updates work after the first production
+deploy without setting anything. The per-deployment host (`VERCEL_URL`) is
+deliberately ignored: it changes on every push, and the webhook is registered
+once with whatever URL was current at subscribe time.
+
 ### Replacing the storage seam
 
-[`src/lib/integration-store.ts`](src/lib/integration-store.ts) writes a JSON file
-under `.data/` because the demo has no database. Swap its functions for your own
-table; nothing else changes.
+[`src/lib/kv.ts`](src/lib/kv.ts) is the whole of it: three methods, `get` / `set`
+/ `del`. [`integration-store.ts`](src/lib/integration-store.ts) sits on top,
+keyed per user (`integration:<id>`) rather than as one document, so two
+concurrent serverless invocations cannot read-modify-write over each other. A
+`webhooktoken:<token>` index maps unsigned webhook deliveries back to their owner
+without scanning.
 
 ### What was verified
 
@@ -281,7 +313,11 @@ matching, currency parsing, unknown categories, per-row skip reasons, and the
 imported products then appearing in the shop, on their own product page and in
 the cart. Webhook token authentication was checked (valid 200, wrong and missing
 404), as was the guard that refuses to subscribe without `APP_PUBLIC_URL`.
-Records written before purposes existed migrate to `orders` and keep working.
+Records written before purposes existed migrate to `orders` and keep working, as
+do `.data/` files written before the KV seam existed. Both storage backends were
+exercised: the file backend still resolves legacy data, and the Redis backend was
+driven through a full read-modify-write round trip against a stub, with one
+purpose's changes leaving the other untouched.
 
 The connect popup and `list-options` need a real secret and were not exercised
 against viaSocket.

@@ -273,8 +273,14 @@ export function mapRowsToProducts(rows: Record<string, unknown>[]): MappedRow[] 
 /* ------------------------------------------------------------------ reading */
 
 export async function getImportedProducts(): Promise<Product[]> {
-  const catalogue = await readImportedCatalogue();
-  return catalogue?.products ?? [];
+  try {
+    const catalogue = await readImportedCatalogue();
+    return catalogue?.products ?? [];
+  } catch {
+    // Storage being unreachable or unconfigured must never take the shop down —
+    // the integration is additive, so the seed catalogue simply stands alone.
+    return [];
+  }
 }
 
 /**

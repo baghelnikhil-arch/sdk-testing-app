@@ -23,13 +23,26 @@ import {
 const PRIVATE_HOST =
   /^(localhost|127\.|0\.0\.0\.0$|\[?::1\]?$|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)|\.local$/i;
 
+export function publicOrigin(): string | null {
+  const explicit = process.env.APP_PUBLIC_URL?.trim();
+  if (explicit) return explicit;
+
+  /*
+   * Vercel exposes the stable production domain. The per-deployment host
+   * (VERCEL_URL) is deliberately NOT used: it changes on every deploy, and the
+   * webhook is registered once with whatever URL was current at subscribe time.
+   */
+  const production = process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim();
+  return production ? `https://${production}` : null;
+}
+
 function resolvePublicBaseUrl(): { origin: string } | { error: string } {
-  const raw = process.env.APP_PUBLIC_URL?.trim();
+  const raw = publicOrigin();
 
   if (!raw) {
     return {
       error:
-        "Live updates need an address viaSocket can call. Set APP_PUBLIC_URL to your deployed https URL — or to a tunnel such as ngrok while developing — then restart the app.",
+        "Live updates need an address viaSocket can call. Deploy the app, or set APP_PUBLIC_URL to a tunnel such as ngrok while developing, then restart.",
     };
   }
 

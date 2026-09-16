@@ -1,12 +1,12 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import path from "node:path";
+import { delKey, getJSON, setJSON } from "./kv";
 import type { Product } from "@/types";
 
 /**
- * Where integration state lives.
+ * Integration state, on top of the KV seam in `lib/kv.ts`.
  *
- * JSON files, because the demo has no database. **This is the seam to replace:**
- * swap these functions for your own tables and nothing else in the app changes.
+ * Keys are per user rather than one big document: two serverless invocations
+ * handling two people must not read-modify-write the same blob and clobber each
+ * other.
  *
  * `scriptId` is a credential — anyone holding it can run Google Sheets as this
  * user — so it is stored server-side and never sent to the browser.
@@ -40,11 +40,11 @@ export type Connection = {
 };
 
 type UserRecord = Partial<Record<Purpose, Connection>>;
-type StoreShape = Record<string, UserRecord>;
 
-const DIR = path.join(process.cwd(), ".data");
-const FILE = path.join(DIR, "integrations.json");
-const CATALOGUE_FILE = path.join(DIR, "catalogue.json");
+const userKey = (endUserId: string) => `integration:${endUserId}`;
+/** Index, so an unsigned webhook can be attributed without scanning every user. */
+const tokenKey = (token: string) => `webhooktoken:${token}`;
+const CATALOGUE_KEY = "catalogue";
 
 /** Records written before purposes existed were order-export connections. */
 function migrate(record: unknown): UserRecord {
@@ -55,33 +55,19 @@ function migrate(record: unknown): UserRecord {
   return record as UserRecord;
 }
 
-async function readStore(): Promise<StoreShape> {
-  try {
-    const raw = JSON.parse(await readFile(FILE, "utf8")) as StoreShape;
-    return Object.fromEntries(
-      Object.entries(raw).map(([user, record]) => [user, migrate(record)]),
-    );
-  } catch {
-    return {};
-  }
-}
-
-async function writeStore(store: StoreShape) {
-  await mkdir(DIR, { recursive: true });
-  await writeFile(FILE, JSON.stringify(store, null, 2), "utf8");
+async function readUser(endUserId: string): Promise<UserRecord> {
+  return migrate(await getJSON<unknown>(userKey(endUserId)));
 }
 
 export async function getConnection(
   endUserId: string,
   purpose: Purpose,
 ): Promise<Connection | null> {
-  const store = await readStore();
-  return store[endUserId]?.[purpose] ?? null;
+  return (await readUser(endUserId))[purpose] ?? null;
 }
 
 export async function getConnections(endUserId: string): Promise<UserRecord> {
-  const store = await readStore();
-  return store[endUserId] ?? {};
+  return readUser(endUserId);
 }
 
 /** Shallow-merges into the existing connection, creating it when absent. */
@@ -90,8 +76,7 @@ export async function saveConnection(
   purpose: Purpose,
   patch: Partial<Connection> & Pick<Connection, "authId" | "scriptId">,
 ): Promise<Connection> {
-  const store = await readStore();
-  const user = store[endUserId] ?? {};
+  const user = await readUser(endUserId);
   const existing = user[purpose];
 
   const next: Connection = {
@@ -101,8 +86,7 @@ export async function saveConnection(
     connectedAt: existing?.connectedAt ?? new Date().toISOString(),
   };
 
-  store[endUserId] = { ...user, [purpose]: next };
-  await writeStore(store);
+  await writeUser(endUserId, { ...user, [purpose]: next }, existing);
   return next;
 }
 
@@ -112,24 +96,40 @@ export async function patchConnection(
   purpose: Purpose,
   patch: Partial<Connection>,
 ): Promise<Connection | null> {
-  const store = await readStore();
-  const existing = store[endUserId]?.[purpose];
+  const user = await readUser(endUserId);
+  const existing = user[purpose];
   if (!existing) return null;
 
   const next = { ...existing, ...patch };
-  store[endUserId] = { ...store[endUserId], [purpose]: next };
-  await writeStore(store);
+  await writeUser(endUserId, { ...user, [purpose]: next }, existing);
   return next;
 }
 
 export async function clearConnection(endUserId: string, purpose: Purpose) {
-  const store = await readStore();
-  const user = store[endUserId];
-  if (!user) return;
-
+  const user = await readUser(endUserId);
+  const existing = user[purpose];
   delete user[purpose];
-  store[endUserId] = user;
-  await writeStore(store);
+
+  await writeUser(endUserId, user, existing);
+}
+
+/** Writes the record and keeps the webhook-token index in step with it. */
+async function writeUser(
+  endUserId: string,
+  next: UserRecord,
+  previous?: Connection,
+) {
+  await setJSON(userKey(endUserId), next);
+
+  const nextToken = next.catalogue?.webhookToken;
+  const previousToken = previous?.webhookToken;
+
+  if (previousToken && previousToken !== nextToken) {
+    await delKey(tokenKey(previousToken));
+  }
+  if (nextToken && nextToken !== previousToken) {
+    await setJSON(tokenKey(nextToken), endUserId);
+  }
 }
 
 /** Finds the owner of a webhook token, so unsigned events can be attributed. */
@@ -137,21 +137,21 @@ export async function findByWebhookToken(
   token: string,
 ): Promise<{ endUserId: string; connection: Connection } | null> {
   if (!token) return null;
-  const store = await readStore();
 
-  for (const [endUserId, record] of Object.entries(store)) {
-    const connection = record.catalogue;
-    if (connection?.webhookToken && connection.webhookToken === token) {
-      return { endUserId, connection };
-    }
-  }
-  return null;
+  const endUserId = await getJSON<string>(tokenKey(token));
+  if (!endUserId) return null;
+
+  const connection = await getConnection(endUserId, "catalogue");
+  // The index can outlive the connection; treat a dangling entry as unknown.
+  if (!connection || connection.webhookToken !== token) return null;
+
+  return { endUserId, connection };
 }
 
 /* ---------------------------------------------------------------------------
  * Imported catalogue.
  *
- * Stored globally rather than per end user: products imported from a sheet are
+ * Stored under one key rather than per user: products imported from a sheet are
  * the shop's stock, visible to every visitor, not private to whoever connected
  * the account.
  * ------------------------------------------------------------------------- */
@@ -163,20 +163,16 @@ export type ImportedCatalogue = {
 };
 
 export async function readImportedCatalogue(): Promise<ImportedCatalogue | null> {
-  try {
-    return JSON.parse(
-      await readFile(CATALOGUE_FILE, "utf8"),
-    ) as ImportedCatalogue;
-  } catch {
-    return null;
-  }
+  return getJSON<ImportedCatalogue>(CATALOGUE_KEY);
 }
 
 export async function writeImportedCatalogue(value: ImportedCatalogue) {
-  await mkdir(DIR, { recursive: true });
-  await writeFile(CATALOGUE_FILE, JSON.stringify(value, null, 2), "utf8");
+  await setJSON(CATALOGUE_KEY, value);
 }
 
 export async function clearImportedCatalogue() {
-  await writeImportedCatalogue({ products: [], syncedAt: new Date().toISOString() });
+  await writeImportedCatalogue({
+    products: [],
+    syncedAt: new Date().toISOString(),
+  });
 }

@@ -12,6 +12,7 @@ import {
   revokeConnection,
   setFlowStatus,
 } from "@/lib/viasocket";
+import { storageKind } from "@/lib/kv";
 import { clearImportedCatalogue } from "@/lib/integration-store";
 import { revalidatePath } from "next/cache";
 
@@ -23,10 +24,22 @@ export async function GET(request: Request) {
   }
 
   const endUserId = await peekEndUserId();
-  const connection = endUserId ? await getConnection(endUserId, purpose) : null;
+  const storage = storageKind();
+
+  // A missing store is reported, not thrown: the settings page should explain
+  // the problem rather than render an error.
+  let connection = null;
+  let storageError: string | null = null;
+  try {
+    connection = endUserId ? await getConnection(endUserId, purpose) : null;
+  } catch (error) {
+    storageError = (error as Error).message;
+  }
 
   return NextResponse.json({
     configured: isConfigured(),
+    storage,
+    storageError,
     connected: Boolean(connection),
     spreadsheetLabel: connection?.spreadsheetLabel ?? null,
     sheetLabel: connection?.sheetLabel ?? null,

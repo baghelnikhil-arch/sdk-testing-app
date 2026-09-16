@@ -19,6 +19,9 @@ export type Purpose = "orders" | "catalogue";
 
 export type SheetsStatus = {
   configured: boolean;
+  /** "redis" durable, "file" local only, "none" = serverless with no store. */
+  storage?: "redis" | "file" | "none";
+  storageError?: string | null;
   connected: boolean;
   spreadsheetLabel: string | null;
   sheetLabel: string | null;
