@@ -1,0 +1,55 @@
+import type { Metadata } from "next";
+import { Inter, Instrument_Serif } from "next/font/google";
+import { Navbar } from "@/components/layout/Navbar";
+import { Footer } from "@/components/layout/Footer";
+import { Providers } from "./providers";
+import { SITE } from "@/lib/constants";
+import "./globals.css";
+
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-inter",
+  display: "swap",
+});
+
+const display = Instrument_Serif({
+  subsets: ["latin"],
+  weight: "400",
+  variable: "--font-display",
+  display: "swap",
+});
+
+export const metadata: Metadata = {
+  title: {
+    default: `${SITE.name} — ${SITE.tagline}`,
+    template: `%s · ${SITE.name}`,
+  },
+  description: SITE.description,
+};
+
+export default function RootLayout({
+  children,
+}: Readonly<{ children: React.ReactNode }>) {
+  return (
+    <html lang="en" className={`${inter.variable} ${display.variable}`}>
+      <body className="flex min-h-screen flex-col">
+        <Providers>
+          <a
+            href="#main"
+            className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-70 focus:rounded-md focus:bg-foreground focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-background"
+          >
+            Skip to content
+          </a>
+
+          <Navbar />
+
+          <main id="main" className="flex-1">
+            {children}
+          </main>
+
+          <Footer />
+        </Providers>
+      </body>
+    </html>
+  );
+}

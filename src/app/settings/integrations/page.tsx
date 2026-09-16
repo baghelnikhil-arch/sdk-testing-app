@@ -1,0 +1,37 @@
+import type { Metadata } from "next";
+import { OrderExportCard } from "@/components/integrations/SheetsConnectionCard";
+import { ProductSheetCard } from "@/components/integrations/ProductSheetCard";
+import { PageHeader } from "@/components/ui/PageHeader";
+
+export const metadata: Metadata = {
+  title: "Integrations",
+  description: "Connect Aurelle to the tools you already use.",
+};
+
+export default function IntegrationsPage() {
+  return (
+    <>
+      <PageHeader
+        crumbs={[
+          { label: "Home", href: "/" },
+          { label: "Settings" },
+          { label: "Integrations" },
+        ]}
+        title="Integrations"
+        description="Connect the tools you already use. Aurelle never sees your Google password — you authorise through Google's own consent screen."
+      />
+
+      <div className="container-page py-10 md:py-14">
+        {/*
+          Two independent connections. Each has its own Google account and its
+          own spreadsheet: reading the catalogue and writing orders are different
+          jobs, often owned by different people.
+        */}
+        <div className="flex max-w-3xl flex-col gap-6">
+          <ProductSheetCard />
+          <OrderExportCard />
+        </div>
+      </div>
+    </>
+  );
+}
