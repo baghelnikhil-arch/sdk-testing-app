@@ -2,9 +2,10 @@ import { revalidatePath } from "next/cache";
 import {
   getConnection,
   patchConnection,
+  readImportedCatalogue,
   writeImportedCatalogue,
 } from "./integration-store";
-import { extractRows, mapRowsToProducts } from "./catalogue";
+import { extractRows, mapRowsToProducts, usesFallbackImage } from "./catalogue";
 import { FIELDS, LIST_ROWS_ACTION, runAction } from "./viasocket";
 
 /** Guards against a runaway sheet turning into a 10,000-product storefront. */
@@ -14,6 +15,10 @@ export type SyncResult = {
   imported: number;
   skipped: { row: number; reason: string }[];
   truncated: boolean;
+  /** Imported, but showing the placeholder because the sheet had no image URL. */
+  withoutImages: number;
+  /** Set when an empty result was refused to protect a stocked shop. */
+  keptExisting?: number;
 };
 
 /**
@@ -47,14 +52,39 @@ export async function syncCatalogue(endUserId: string): Promise<SyncResult> {
     .filter((entry): entry is Extract<typeof entry, { ok: true }> => entry.ok)
     .map((entry) => entry.product);
 
+  // Blank trailing rows are padding, not errors — they are never reported.
   const skipped = mapped
     .filter((entry): entry is Extract<typeof entry, { ok: false }> => !entry.ok)
+    .filter((entry) => !entry.blank)
     .map(({ row, reason }) => ({ row, reason }));
 
   const truncated = products.length > MAX_PRODUCTS;
+  const kept = products.slice(0, MAX_PRODUCTS);
+
+  /*
+   * Never let an empty result delete a stocked shop.
+   *
+   * An import that yields nothing is a misconfiguration — the wrong tab, a
+   * renamed header — far more often than a deliberate "remove every product".
+   * A webhook can fire one of these without anybody pressing a button, so this
+   * check has to happen BEFORE the write, not after it. Emptying the shop
+   * deliberately is still possible: disconnect the catalogue connection.
+   */
+  if (kept.length === 0) {
+    const existing = await readImportedCatalogue();
+    if (existing && existing.products.length > 0) {
+      return {
+        imported: 0,
+        skipped,
+        truncated: false,
+        withoutImages: 0,
+        keptExisting: existing.products.length,
+      };
+    }
+  }
 
   await writeImportedCatalogue({
-    products: products.slice(0, MAX_PRODUCTS),
+    products: kept,
     syncedAt: new Date().toISOString(),
     source: {
       spreadsheet: connection.spreadsheetLabel ?? connection.spreadsheetId,
@@ -64,12 +94,18 @@ export async function syncCatalogue(endUserId: string): Promise<SyncResult> {
 
   await patchConnection(endUserId, "catalogue", {
     lastSyncAt: new Date().toISOString(),
-    lastSyncCount: Math.min(products.length, MAX_PRODUCTS),
+    lastSyncCount: kept.length,
   });
 
   // Product pages are cached; without this a new row would not appear until the
   // next deploy.
   revalidatePath("/", "layout");
 
-  return { imported: Math.min(products.length, MAX_PRODUCTS), skipped, truncated };
+  return {
+    imported: kept.length,
+    skipped,
+    truncated,
+    withoutImages: kept.filter(usesFallbackImage).length,
+  };
+
 }

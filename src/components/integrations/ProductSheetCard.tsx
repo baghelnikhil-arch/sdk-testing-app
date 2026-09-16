@@ -20,6 +20,8 @@ type SyncResult = {
   imported: number;
   skipped: { row: number; reason: string }[];
   truncated: boolean;
+  withoutImages: number;
+  keptExisting?: number;
 };
 
 const COLUMNS: { header: string; note: string }[] = [
@@ -157,11 +159,47 @@ export function ProductSheetCard() {
 
         {result && (
           <div role="status" className="mt-4">
-            <p className="flex items-center gap-2 text-sm text-success">
-              <Check className="h-4 w-4" aria-hidden="true" />
-              Imported {result.imported}{" "}
-              {result.imported === 1 ? "product" : "products"}.
-            </p>
+            {result.imported > 0 ? (
+              <p className="flex items-center gap-2 text-sm text-success">
+                <Check className="h-4 w-4" aria-hidden="true" />
+                Imported {result.imported}{" "}
+                {result.imported === 1 ? "product" : "products"}.
+              </p>
+            ) : (
+              /* Zero is the confusing case — say why, not just the number. */
+              <p className="flex items-start gap-2.5 rounded-md border border-border bg-muted px-4 py-3 text-sm text-muted-foreground">
+                <AlertTriangle
+                  className="mt-0.5 h-4 w-4 shrink-0 text-foreground"
+                  aria-hidden="true"
+                />
+                <span>
+                  <span className="font-medium text-foreground">
+                    No products were imported.
+                  </span>{" "}
+                  {result.skipped.length > 0
+                    ? "Every row was skipped — see the reasons below."
+                    : "The tab looks empty. Check you picked the right one."}{" "}
+                  A product sheet needs a <code>Name</code> column and a{" "}
+                  <code>Price</code> column in its first row.
+                  {result.keptExisting ? (
+                    <>
+                      {" "}
+                      The {result.keptExisting} product
+                      {result.keptExisting === 1 ? "" : "s"} already in the shop
+                      were left alone.
+                    </>
+                  ) : null}
+                </span>
+              </p>
+            )}
+
+            {result.withoutImages > 0 && (
+              <p className="mt-2 text-xs text-muted-foreground">
+                {result.withoutImages} of them have no image and show a
+                placeholder — add <code>https://</code> URLs to the{" "}
+                <code>Image</code> column.
+              </p>
+            )}
 
             {result.truncated && (
               <p className="mt-2 text-xs text-muted-foreground">

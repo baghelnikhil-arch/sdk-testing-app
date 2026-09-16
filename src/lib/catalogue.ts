@@ -1,5 +1,4 @@
 import { products as staticProducts } from "@/data/products";
-import { img } from "@/data/images";
 import { readImportedCatalogue } from "./integration-store";
 import { slugify } from "./utils";
 import type { CategorySlug, Product, ProductColor } from "@/types";
@@ -20,7 +19,19 @@ export function isImported(product: Product) {
   return product.id.startsWith(IMPORTED_PREFIX);
 }
 
-const FALLBACK_IMAGE = img("photo-1523381210434-271e8be1f52b");
+/**
+ * Shown when a row has no usable image URL.
+ *
+ * Deliberately a neutral "no image" graphic rather than a stock photograph: a
+ * real photo of an unrelated garment reads as the product, so a wallet would
+ * silently appear as a picture of shirts. This looks like what it is, and
+ * `productsWithoutImages` reports the count so the sheet can be fixed.
+ */
+export const FALLBACK_IMAGE = "/product-placeholder.png";
+
+export function usesFallbackImage(product: Product) {
+  return product.images[0] === FALLBACK_IMAGE;
+}
 
 /** Header aliases, matched case- and punctuation-insensitively. */
 const COLUMNS: Record<string, string[]> = {
@@ -181,7 +192,8 @@ function toImages(value: unknown): string[] {
 
 export type MappedRow =
   | { ok: true; product: Product }
-  | { ok: false; row: number; reason: string };
+  /** `blank` rows are trailing spreadsheet padding, not mistakes worth reporting. */
+  | { ok: false; row: number; reason: string; blank?: boolean };
 
 /**
  * `List Rows in Sheet` has no published response schema, so the envelope is
@@ -208,13 +220,15 @@ export function mapRowsToProducts(rows: Record<string, unknown>[]): MappedRow[] 
   const seen = new Set<string>();
 
   return rows.map((raw, index) => {
-    const rowNumber = index + 2; // +1 for zero-index, +1 for the header row.
-
     // Some responses wrap the cells under a nested key; unwrap one level.
     const row =
       raw && typeof raw === "object" && !Array.isArray(raw)
         ? ((raw.row ?? raw.fields ?? raw) as Record<string, unknown>)
         : {};
+
+    // The response carries the real spreadsheet row; fall back to position.
+    const reported = Number(row._rowNumber ?? row.rowNumber);
+    const rowNumber = Number.isFinite(reported) ? reported : index + 2;
 
     const headers = buildHeaderMap(row);
     const get = (field: string) => {
@@ -223,9 +237,22 @@ export function mapRowsToProducts(rows: Record<string, unknown>[]): MappedRow[] 
     };
 
     const name = text(get("name"));
+    const price = money(get("price"));
+
+    /*
+     * Neither a name nor a price means this is not an attempt at a product —
+     * it is the empty tail every spreadsheet has below its last real row. A
+     * checkbox column makes those rows look non-empty (Sheets returns FALSE for
+     * every unticked box), so emptiness is judged on the two required fields
+     * rather than on whether any cell has a value. Reporting them would bury
+     * the genuine problems under a hundred identical lines.
+     */
+    if (!name && price === undefined) {
+      return { ok: false, row: rowNumber, reason: "empty row", blank: true };
+    }
+
     if (!name) return { ok: false, row: rowNumber, reason: "no product name" };
 
-    const price = money(get("price"));
     if (price === undefined) {
       return { ok: false, row: rowNumber, reason: `no usable price for "${name}"` };
     }
