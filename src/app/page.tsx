@@ -5,15 +5,17 @@ import { CategoryCard } from "@/components/product/CategoryCard";
 import { ProductGrid } from "@/components/product/ProductGrid";
 import { SectionHeading } from "@/components/ui/SectionHeading";
 import { Newsletter } from "@/components/ui/Newsletter";
-import { getCategories, getFeaturedProducts, getNewArrivals } from "@/lib/queries";
-import { getCatalogueProducts } from "@/lib/catalogue";
+import { getFeaturedProducts, getNewArrivals } from "@/lib/queries";
+import { getCatalogueProducts, getCategories } from "@/lib/shop-data";
 
 export default async function HomePage() {
-  const categories = getCategories();
   // Seed products plus anything imported from the operator's product sheet.
-  const catalogue = await getCatalogueProducts();
-  const featured = getFeaturedProducts(8, catalogue);
-  const newArrivals = getNewArrivals(4, catalogue);
+  const [categories, catalogue] = await Promise.all([
+    getCategories(),
+    getCatalogueProducts(),
+  ]);
+  const featured = getFeaturedProducts(catalogue, 8);
+  const newArrivals = getNewArrivals(catalogue, 4);
 
   return (
     <>

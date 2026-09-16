@@ -1,13 +1,15 @@
 import type { Metadata } from "next";
 import { ButtonLink } from "@/components/ui/Button";
-import { categories } from "@/data/categories";
+import { getCategories } from "@/lib/shop-data";
 import Link from "next/link";
 
 export const metadata: Metadata = {
   title: "Page not found",
 };
 
-export default function NotFound() {
+export default async function NotFound() {
+  const categories = await getCategories();
+
   return (
     <div className="container-page flex flex-col items-center py-24 text-center md:py-36">
       <p className="font-display text-7xl leading-none text-border-strong md:text-8xl">

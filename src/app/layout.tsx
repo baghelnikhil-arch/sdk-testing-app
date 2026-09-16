@@ -4,6 +4,7 @@ import { Navbar } from "@/components/layout/Navbar";
 import { Footer } from "@/components/layout/Footer";
 import { Providers } from "./providers";
 import { SITE } from "@/lib/constants";
+import { getCategories } from "@/lib/shop-data";
 import "./globals.css";
 
 const inter = Inter({
@@ -27,9 +28,13 @@ export const metadata: Metadata = {
   description: SITE.description,
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
+  // Fetched once here and handed to the header and footer, so the catalogue
+  // never has to be bundled into the browser just to render navigation.
+  const categories = await getCategories();
+
   return (
     <html lang="en" className={`${inter.variable} ${display.variable}`}>
       <body className="flex min-h-screen flex-col">
@@ -41,13 +46,13 @@ export default function RootLayout({
             Skip to content
           </a>
 
-          <Navbar />
+          <Navbar categories={categories} />
 
           <main id="main" className="flex-1">
             {children}
           </main>
 
-          <Footer />
+          <Footer categories={categories} />
         </Providers>
       </body>
     </html>

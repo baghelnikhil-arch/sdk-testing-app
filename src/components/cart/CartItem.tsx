@@ -5,9 +5,8 @@ import Link from "next/link";
 import { Trash2 } from "lucide-react";
 import { Price } from "@/components/ui/Price";
 import { QuantitySelector } from "@/components/ui/QuantitySelector";
-import { categoryBySlug } from "@/data/categories";
 import { MAX_QUANTITY } from "@/hooks/use-cart";
-import { formatPrice } from "@/lib/utils";
+import { formatCategory, formatPrice } from "@/lib/utils";
 import type { CartLine } from "@/types";
 
 export function CartItem({
@@ -20,8 +19,7 @@ export function CartItem({
   onRemove: () => void;
 }) {
   const { product } = line;
-  const categoryName =
-    categoryBySlug.get(product.category)?.name ?? product.category;
+  const categoryName = formatCategory(product.category);
 
   const variant = [line.size, line.color].filter(Boolean).join(" · ");
 

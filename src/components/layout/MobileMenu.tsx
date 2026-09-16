@@ -5,8 +5,8 @@ import { createPortal } from "react-dom";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Heart, ShoppingBag, X } from "lucide-react";
-import { categories } from "@/data/categories";
 import { NAV_LINKS, SITE } from "@/lib/constants";
+import type { Category } from "@/types";
 import { cn } from "@/lib/utils";
 
 export function MobileMenu({
@@ -14,11 +14,13 @@ export function MobileMenu({
   onClose,
   cartCount,
   wishlistCount,
+  categories,
 }: {
   open: boolean;
   onClose: () => void;
   cartCount: number;
   wishlistCount: number;
+  categories: Category[];
 }) {
   const pathname = usePathname();
   const panelRef = useRef<HTMLDivElement>(null);

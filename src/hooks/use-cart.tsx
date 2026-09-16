@@ -87,8 +87,8 @@ const CartContext = createContext<CartContextValue | null>(null);
 export function CartProvider({ children }: { children: React.ReactNode }) {
   const [items, dispatch] = useReducer(reducer, []);
   const [hydrated, setHydrated] = useState(false);
-  // Resolves seed products immediately and imported ones once they load.
-  const { lookup } = useCatalogue();
+  // The catalogue is fetched, so lines cannot resolve until it lands.
+  const { lookup, loaded: catalogueLoaded } = useCatalogue();
 
   // Read persisted state after mount so server and first client render match.
   useEffect(() => {
@@ -138,7 +138,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       items,
       lines,
       totals,
-      hydrated,
+      hydrated: hydrated && catalogueLoaded,
       addItem,
       removeItem,
       setQuantity,
@@ -150,6 +150,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       lines,
       totals,
       hydrated,
+      catalogueLoaded,
       addItem,
       removeItem,
       setQuantity,

@@ -44,11 +44,12 @@ src/
 │   ├── home/       Hero, PromoBanner, Benefits
 │   ├── ui/         Button, Badge, Price, Rating, Breadcrumb, Pagination, EmptyState, …
 │   └── integrations/ GoogleSheetsCard (connect button + pickers)
-├── data/           products.ts, categories.ts, reviews.ts, images.ts  ← the mock database
+├── data/           products.ts, categories.ts, reviews.ts  ← seed for `db:seed`, not runtime
 ├── hooks/          use-cart, use-wishlist (Context + reducer, persisted)
-├── lib/            queries.ts (data access), catalogue.ts (sheet → Product mapping),
-│                   cart.ts (pricing), viasocket.ts (server only), sync-catalogue.ts,
-│                   order-export.ts, db.ts + integration-store.ts (Prisma), end-user.ts
+├── lib/            shop-data.ts (all catalogue reads), queries.ts (pure list logic),
+│                   catalogue.ts (sheet → Product mapping), cart.ts (pricing),
+│                   viasocket.ts (server only), sync-catalogue.ts, order-export.ts,
+│                   db.ts + integration-store.ts (Prisma), end-user.ts
 └── types/          Domain types
 ```
 
@@ -57,10 +58,10 @@ src/
 Everything below exists so that adding a real backend does **not** mean
 rewriting the UI.
 
-1. **`src/lib/queries.ts` is the only thing that touches the mock data.**
-   Screens call `getProduct`, `filterProducts`, `getRelatedProducts` and so on.
-   Swapping `src/data` for a database or an HTTP API means changing the bodies of
-   these functions (and making them `async`) — no component changes.
+1. **`src/lib/shop-data.ts` is the only thing that queries the catalogue.**
+   Screens call `getCatalogueProducts`, `getCategory`, `getReviews` and so on.
+   This seam is what made moving from TypeScript files to Postgres a change to
+   one module rather than to every page.
 
 2. **`src/lib/cart.ts` owns pricing.** Subtotal, discount and shipping are
    computed in `computeTotals`, not scattered through components. A real
@@ -269,27 +270,47 @@ gets its own `script_id` rather than reusing the first one's.
 
 ## Database
 
-Integration state lives in Postgres via Prisma — two tables, both narrow:
+Everything the app reads or writes lives in Postgres, through Prisma:
 
 | Table | Holds |
 | --- | --- |
-| `Connection` | One row per (end user, purpose): the viaSocket ids and the chosen sheet. Unique on the pair, so the two integrations never collide. |
-| `ImportedProduct` | One row per product read from a sheet. Shop stock, so not keyed by user. |
+| `Product` | The whole catalogue. `source` is `"seed"` (shipped with the repo) or `"sheet"` (imported from a spreadsheet) — an import replaces only the latter. |
+| `Category` | The four edits the shop is organised by. |
+| `Review` | Product reviews, cascading with their product. |
+| `Connection` | One row per (end user, purpose): viaSocket ids and the chosen sheet. |
 
 ```bash
-npm run db:push     # apply prisma/schema.prisma to the database
-npm run db:studio   # browse the data
+npm run db:push     # apply prisma/schema.prisma
+npm run db:seed     # load src/data into the database (safe to re-run)
+npm run db:studio   # browse it
 ```
+
+`src/data/*.ts` is now **seed material, not runtime data** — the app never imports
+it. Editing a product there changes nothing until `npm run db:seed` runs, and
+seeding only touches `source: "seed"` rows, so it never destroys an imported
+catalogue.
 
 `DATABASE_URL` is the **pooled** endpoint and is what the app uses — serverless
 functions come and go constantly and would exhaust a connection limit without a
-pooler. `DIRECT_URL` is the unpooled one and is used only for migrations, which
-need a real session. `prisma generate` runs on `postinstall`, so any host builds
-the client automatically.
+pooler. `DIRECT_URL` is the unpooled one, used only for migrations, which need a
+real session. `prisma generate` runs on `postinstall`, so any host builds the
+client automatically.
 
-Every import replaces the whole product set inside one transaction: the sheet is
-the source of truth, which makes the operation idempotent and lets rows deleted
-from the sheet disappear from the shop without the shop ever being briefly empty.
+### How the catalogue reaches the page
+
+`src/lib/shop-data.ts` is the only module that queries products, categories or
+reviews. Server Components call it directly. The browser cannot — the catalogue
+is no longer in the bundle — so the cart and wishlist resolve their stored
+product ids through `/api/catalogue` instead, and report themselves as not yet
+hydrated until it arrives.
+
+`src/lib/queries.ts` holds no data at all now: it is the filter, sort, paginate
+and related-products logic, operating on whichever list it is handed. That is why
+searching behaves identically on the server-rendered shop page and in the
+client-side cart.
+
+Every read is wrapped so an unreachable database degrades instead of erroring —
+the storefront falls back to an empty catalogue rather than a stack trace.
 
 ## Deploying
 
@@ -300,6 +321,10 @@ DATABASE_URL=            # pooled Postgres URL
 DIRECT_URL=              # unpooled, for migrations
 VIASOCKET_EMBED_SECRET=  # from the viaSocket Install Code page
 ```
+
+A first deploy against an empty database needs `npm run db:push` and
+`npm run db:seed` once. After that the schema and seed are already in place and
+deploys need nothing.
 
 `APP_PUBLIC_URL` is detected automatically on Vercel from
 `VERCEL_PROJECT_PRODUCTION_URL`, so live catalogue updates work after the first

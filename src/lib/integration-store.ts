@@ -1,6 +1,4 @@
-import type { Prisma } from "@prisma/client";
 import { db } from "./db";
-import type { Product } from "@/types";
 
 /**
  * Integration state, in Postgres.
@@ -176,59 +174,27 @@ export async function findByWebhookToken(
   return { endUserId: row.endUserId, connection: toConnection(row) };
 }
 
-/* ---------------------------------------------------------------------------
- * Imported catalogue.
+/**
+ * Finds a connection of another purpose already using this exact sheet.
  *
- * Shop stock, not per-visitor data, so it is not keyed by end user. Every import
- * replaces the whole set: the sheet is the source of truth, which makes the
- * operation idempotent and lets deleted rows disappear from the shop.
- * ------------------------------------------------------------------------- */
+ * Reading products from the sheet the shop writes orders to creates a loop:
+ * every order appends a row, the row trigger fires, the catalogue re-imports
+ * from the order log, and the shop fills with nonsense or empties entirely.
+ * Searches across all users, because the two connections are frequently made in
+ * different browsers and so belong to different demo identities.
+ */
+export async function findSheetConflict(
+  purpose: Purpose,
+  spreadsheetId: string,
+  sheetId: string,
+): Promise<{ purpose: Purpose; spreadsheetLabel: string | null } | null> {
+  const other: Purpose = purpose === "catalogue" ? "orders" : "catalogue";
 
-export type ImportedCatalogue = {
-  products: Product[];
-  syncedAt: string;
-  source?: { spreadsheet: string; sheet: string };
-};
-
-export async function readImportedCatalogue(): Promise<ImportedCatalogue | null> {
-  const rows = await db().importedProduct.findMany({
-    orderBy: { id: "asc" },
+  const row = await db().connection.findFirst({
+    where: { purpose: other, spreadsheetId, sheetId },
   });
-  if (rows.length === 0) return null;
 
-  const newest = rows.reduce(
-    (latest, row) => (row.syncedAt > latest ? row.syncedAt : latest),
-    rows[0].syncedAt,
-  );
-
-  return {
-    products: rows.map((row) => row.data as unknown as Product),
-    syncedAt: newest.toISOString(),
-    source:
-      rows[0].sourceSpreadsheet && rows[0].sourceSheet
-        ? { spreadsheet: rows[0].sourceSpreadsheet, sheet: rows[0].sourceSheet }
-        : undefined,
-  };
-}
-
-export async function writeImportedCatalogue(value: ImportedCatalogue) {
-  const syncedAt = new Date(value.syncedAt);
-
-  // One transaction, so the shop is never briefly empty mid-import.
-  await db().$transaction([
-    db().importedProduct.deleteMany({}),
-    db().importedProduct.createMany({
-      data: value.products.map((product) => ({
-        id: product.id,
-        data: product as unknown as Prisma.InputJsonValue,
-        syncedAt,
-        sourceSpreadsheet: value.source?.spreadsheet ?? null,
-        sourceSheet: value.source?.sheet ?? null,
-      })),
-    }),
-  ]);
-}
-
-export async function clearImportedCatalogue() {
-  await db().importedProduct.deleteMany({});
+  return row
+    ? { purpose: other, spreadsheetLabel: row.spreadsheetLabel }
+    : null;
 }

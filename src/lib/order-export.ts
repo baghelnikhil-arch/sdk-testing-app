@@ -1,5 +1,5 @@
 import { buildCartLines, cartItemKey, computeTotals } from "./cart";
-import { getProduct } from "./queries";
+import { getCatalogueProducts } from "./shop-data";
 import type { CartTotals } from "@/types";
 
 /** What the browser is allowed to tell us about an order. */
@@ -17,7 +17,7 @@ export type SubmittedItem = {
  * are recomputed here with the same `computeTotals` the cart UI uses, so the
  * exported figures cannot be edited from the console.
  */
-export function rebuildOrder(items: SubmittedItem[]) {
+export async function rebuildOrder(items: SubmittedItem[]) {
   const cartItems = items
     .filter((item) => item?.productId && Number(item.quantity) > 0)
     .map((item) => ({
@@ -28,7 +28,10 @@ export function rebuildOrder(items: SubmittedItem[]) {
       color: item.color,
     }));
 
-  const lines = buildCartLines(cartItems, getProduct);
+  const catalogue = await getCatalogueProducts();
+  const byId = new Map(catalogue.map((product) => [product.id, product]));
+
+  const lines = buildCartLines(cartItems, (id) => byId.get(id));
   return { lines, totals: computeTotals(lines) };
 }
 
@@ -54,7 +57,7 @@ export function buildOrderRows({
   placedAt = new Date(),
   customer = "Demo customer",
 }: {
-  lines: ReturnType<typeof rebuildOrder>["lines"];
+  lines: Awaited<ReturnType<typeof rebuildOrder>>["lines"];
   totals: CartTotals;
   orderId: string;
   placedAt?: Date;

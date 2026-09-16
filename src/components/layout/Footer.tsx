@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Facebook, Instagram, Twitter } from "lucide-react";
 import { FOOTER_SECTIONS, SITE } from "@/lib/constants";
+import type { Category } from "@/types";
 
 const SOCIALS = [
   { label: "Instagram", href: "https://instagram.com", icon: Instagram },
@@ -8,7 +9,18 @@ const SOCIALS = [
   { label: "Twitter", href: "https://twitter.com", icon: Twitter },
 ];
 
-export function Footer() {
+export function Footer({ categories }: { categories: Category[] }) {
+  const sections = [
+    {
+      title: "Shop",
+      links: categories.map((category) => ({
+        href: `/shop/${category.slug}`,
+        label: category.name,
+      })),
+    },
+    ...FOOTER_SECTIONS.filter((section) => section.title !== "Shop"),
+  ];
+
   return (
     <footer className="mt-auto border-t border-border bg-subtle">
       <div className="container-page py-14 md:py-16">
@@ -42,7 +54,7 @@ export function Footer() {
             </ul>
           </div>
 
-          {FOOTER_SECTIONS.map((section) => (
+          {sections.map((section) => (
             <nav key={section.title} aria-label={section.title}>
               <h2 className="text-xs font-semibold tracking-[0.16em] text-foreground uppercase">
                 {section.title}

@@ -8,20 +8,18 @@ import {
   useMemo,
   useState,
 } from "react";
-import { getProduct } from "@/lib/queries";
 import type { Product } from "@/types";
 
 /**
  * Product lookup for the browser.
  *
- * The cart and wishlist persist ids only, so they need to resolve products that
- * were imported from a spreadsheet and therefore are not in the bundled seed
- * data. Imported products are fetched once on mount; until they arrive, lookups
- * fall back to the seed catalogue, which is why cart lines re-resolve when this
- * value changes.
+ * The cart and wishlist persist ids only, and the catalogue now lives in the
+ * database rather than the bundle, so the client has to fetch it. `loaded`
+ * guards the gap: until it flips, a cart line cannot be resolved and the page
+ * shows its loading state rather than an empty cart.
  */
 type CatalogueContextValue = {
-  imported: Product[];
+  products: Product[];
   loaded: boolean;
   lookup: (id: string) => Product | undefined;
   refresh: () => Promise<void>;
@@ -30,17 +28,17 @@ type CatalogueContextValue = {
 const CatalogueContext = createContext<CatalogueContextValue | null>(null);
 
 export function CatalogueProvider({ children }: { children: React.ReactNode }) {
-  const [imported, setImported] = useState<Product[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
   const [loaded, setLoaded] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
       const response = await fetch("/api/catalogue", { cache: "no-store" });
       const payload = await response.json();
-      setImported(Array.isArray(payload.products) ? payload.products : []);
+      setProducts(Array.isArray(payload.products) ? payload.products : []);
     } catch {
-      // An unreachable catalogue endpoint must not break the cart; the seed
-      // products still resolve.
+      // An unreachable catalogue endpoint leaves the cart empty rather than
+      // throwing; the shop itself is server-rendered and unaffected.
     } finally {
       setLoaded(true);
     }
@@ -51,18 +49,15 @@ export function CatalogueProvider({ children }: { children: React.ReactNode }) {
   }, [refresh]);
 
   const byId = useMemo(
-    () => new Map(imported.map((product) => [product.id, product])),
-    [imported],
+    () => new Map(products.map((product) => [product.id, product])),
+    [products],
   );
 
-  const lookup = useCallback(
-    (id: string) => byId.get(id) ?? getProduct(id),
-    [byId],
-  );
+  const lookup = useCallback((id: string) => byId.get(id), [byId]);
 
   const value = useMemo(
-    () => ({ imported, loaded, lookup, refresh }),
-    [imported, loaded, lookup, refresh],
+    () => ({ products, loaded, lookup, refresh }),
+    [products, loaded, lookup, refresh],
   );
 
   return (

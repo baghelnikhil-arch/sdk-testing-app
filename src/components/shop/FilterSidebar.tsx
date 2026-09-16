@@ -1,8 +1,7 @@
 "use client";
 
-import { categories } from "@/data/categories";
 import { formatPrice } from "@/lib/utils";
-import type { CategorySlug } from "@/types";
+import type { Category, CategorySlug } from "@/types";
 
 export type FilterState = {
   query: string;
@@ -45,6 +44,7 @@ export function FilterSidebar({
   onChange,
   onReset,
   priceMax,
+  categories,
   /** Category pages fix the category, so the picker is hidden there. */
   showCategories = true,
   /** The mobile drawer supplies its own title bar. */
@@ -54,6 +54,7 @@ export function FilterSidebar({
   onChange: (next: Partial<FilterState>) => void;
   onReset: () => void;
   priceMax: number;
+  categories: Category[];
   showCategories?: boolean;
   showTitle?: boolean;
 }) {

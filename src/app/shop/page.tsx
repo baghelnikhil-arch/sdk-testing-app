@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { ShopBrowser } from "@/components/shop/ShopBrowser";
 import { PageHeader } from "@/components/ui/PageHeader";
-import { getCatalogueProducts } from "@/lib/catalogue";
+import { getCatalogueProducts, getCategories } from "@/lib/shop-data";
 
 export const metadata: Metadata = {
   title: "Shop",
@@ -15,7 +15,10 @@ export default async function ShopPage({
   searchParams: Promise<{ q?: string; sale?: string }>;
 }) {
   const { q = "", sale } = await searchParams;
-  const products = await getCatalogueProducts();
+  const [products, categories] = await Promise.all([
+    getCatalogueProducts(),
+    getCategories(),
+  ]);
 
   return (
     <>
@@ -30,6 +33,7 @@ export default async function ShopPage({
         <ShopBrowser
           key={`${q}|${sale}`}
           products={products}
+          categories={categories}
           initialQuery={q}
           initialSaleOnly={sale === "true"}
         />

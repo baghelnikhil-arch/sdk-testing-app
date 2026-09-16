@@ -6,20 +6,24 @@ import { ProductTabs } from "@/components/product/ProductTabs";
 import { ProductGrid } from "@/components/product/ProductGrid";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { SectionHeading } from "@/components/ui/SectionHeading";
-import { categoryBySlug } from "@/data/categories";
-import { getReviewsForProduct } from "@/data/reviews";
-import { getAllProducts, getRelatedProducts } from "@/lib/queries";
-import { getCatalogueProduct, getCatalogueProducts } from "@/lib/catalogue";
+import { getRelatedProducts } from "@/lib/queries";
+import {
+  getCatalogueProduct,
+  getCatalogueProducts,
+  getCategories,
+  getReviews,
+} from "@/lib/shop-data";
 
 type Params = Promise<{ id: string }>;
 
 /**
- * Only the seed catalogue is known at build time. Products imported from a
- * sheet are rendered on demand — `dynamicParams` is on by default — and the
- * import revalidates these pages so a new row is reachable immediately.
+ * Product pages render on demand rather than at build time: the catalogue lives
+ * in the database and changes whenever a sheet is imported, so prerendering a
+ * fixed list would go stale and would make the build depend on the database
+ * being reachable.
  */
 export function generateStaticParams() {
-  return getAllProducts().map((product) => ({ id: product.id }));
+  return [];
 }
 
 export async function generateMetadata({
@@ -41,14 +45,17 @@ export async function generateMetadata({
 
 export default async function ProductPage({ params }: { params: Params }) {
   const { id } = await params;
-  const catalogue = await getCatalogueProducts();
-  const product = await getCatalogueProduct(id);
+  const [product, catalogue, categories] = await Promise.all([
+    getCatalogueProduct(id),
+    getCatalogueProducts(),
+    getCategories(),
+  ]);
 
   if (!product) notFound();
 
-  const category = categoryBySlug.get(product.category);
-  const reviews = getReviewsForProduct(product.id);
-  const related = getRelatedProducts(product, 4, catalogue);
+  const category = categories.find((entry) => entry.slug === product.category);
+  const reviews = await getReviews(product.id);
+  const related = getRelatedProducts(product, catalogue, 4);
 
   return (
     <div className="container-page py-6 md:py-10">

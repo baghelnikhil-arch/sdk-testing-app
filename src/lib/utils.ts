@@ -34,3 +34,16 @@ export function formatDate(iso: string) {
     day: "numeric",
   });
 }
+
+/**
+ * Human label for a category slug.
+ *
+ * Client components only ever need the label, not the whole category record, so
+ * deriving it here keeps the catalogue out of the browser bundle.
+ */
+export function formatCategory(slug: string) {
+  return slug
+    .split("-")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}

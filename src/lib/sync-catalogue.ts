@@ -1,10 +1,10 @@
 import { revalidatePath } from "next/cache";
 import {
+  findSheetConflict,
   getConnection,
   patchConnection,
-  readImportedCatalogue,
-  writeImportedCatalogue,
 } from "./integration-store";
+import { countSheetProducts, replaceSheetProducts } from "./shop-data";
 import { extractRows, mapRowsToProducts, usesFallbackImage } from "./catalogue";
 import { FIELDS, LIST_ROWS_ACTION, runAction } from "./viasocket";
 
@@ -35,6 +35,22 @@ export async function syncCatalogue(endUserId: string): Promise<SyncResult> {
 
   if (!connection?.spreadsheetId || !connection?.sheetId) {
     throw new Error("No product sheet is selected.");
+  }
+
+  /*
+   * Checked here as well as when the sheet is chosen: a pairing saved before
+   * this rule existed would otherwise keep firing, and the webhook path never
+   * passes through the save screen at all.
+   */
+  const conflict = await findSheetConflict(
+    "catalogue",
+    connection.spreadsheetId,
+    connection.sheetId,
+  );
+  if (conflict) {
+    throw new Error(
+      `"${connection.spreadsheetLabel ?? "That sheet"}" is where this shop writes its orders. Reading products from the order log would replace your catalogue with order rows, so the import was stopped. Point the product catalogue at a different sheet.`,
+    );
   }
 
   const payload = await runAction(connection.scriptId, LIST_ROWS_ACTION, {
@@ -71,25 +87,21 @@ export async function syncCatalogue(endUserId: string): Promise<SyncResult> {
    * deliberately is still possible: disconnect the catalogue connection.
    */
   if (kept.length === 0) {
-    const existing = await readImportedCatalogue();
-    if (existing && existing.products.length > 0) {
+    const existing = await countSheetProducts();
+    if (existing > 0) {
       return {
         imported: 0,
         skipped,
         truncated: false,
         withoutImages: 0,
-        keptExisting: existing.products.length,
+        keptExisting: existing,
       };
     }
   }
 
-  await writeImportedCatalogue({
-    products: kept,
-    syncedAt: new Date().toISOString(),
-    source: {
-      spreadsheet: connection.spreadsheetLabel ?? connection.spreadsheetId,
-      sheet: connection.sheetLabel ?? connection.sheetId,
-    },
+  await replaceSheetProducts(kept, {
+    spreadsheet: connection.spreadsheetLabel ?? connection.spreadsheetId,
+    sheet: connection.sheetLabel ?? connection.sheetId,
   });
 
   await patchConnection(endUserId, "catalogue", {

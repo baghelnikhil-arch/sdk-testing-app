@@ -30,7 +30,7 @@ const WishlistContext = createContext<WishlistContextValue | null>(null);
 export function WishlistProvider({ children }: { children: React.ReactNode }) {
   const [ids, setIds] = useState<string[]>([]);
   const [hydrated, setHydrated] = useState(false);
-  const { lookup } = useCatalogue();
+  const { lookup, loaded: catalogueLoaded } = useCatalogue();
 
   useEffect(() => {
     setIds(readJSON<string[]>(STORAGE_KEY, []));
@@ -71,13 +71,13 @@ export function WishlistProvider({ children }: { children: React.ReactNode }) {
       ids,
       products,
       count: ids.length,
-      hydrated,
+      hydrated: hydrated && catalogueLoaded,
       isWishlisted,
       toggle,
       remove,
       clear,
     }),
-    [ids, products, hydrated, isWishlisted, toggle, remove, clear],
+    [ids, products, hydrated, catalogueLoaded, isWishlisted, toggle, remove, clear],
   );
 
   return (

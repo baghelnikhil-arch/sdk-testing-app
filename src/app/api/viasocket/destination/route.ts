@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { peekEndUserId, requireEndUserId } from "@/lib/end-user";
 import {
   clearConnection,
+  findSheetConflict,
   getConnection,
   patchConnection,
 } from "@/lib/integration-store";
@@ -13,7 +14,7 @@ import {
   setFlowStatus,
 } from "@/lib/viasocket";
 import { isDatabaseConfigured } from "@/lib/db";
-import { clearImportedCatalogue } from "@/lib/integration-store";
+import { clearSheetProducts } from "@/lib/shop-data";
 import { revalidatePath } from "next/cache";
 
 /** What the browser is allowed to know: labels and readiness, never the ids. */
@@ -69,6 +70,19 @@ export async function PUT(request: Request) {
     );
   }
 
+  const conflict = await findSheetConflict(purpose, spreadsheetId, sheetId);
+  if (conflict) {
+    return NextResponse.json(
+      {
+        error:
+          purpose === "catalogue"
+            ? "That sheet is already where orders are written. Reading products from the order log would re-import your orders as products. Pick a different sheet."
+            : "That sheet is already the product source. Writing orders into it would corrupt your catalogue. Pick a different sheet.",
+      },
+      { status: 409 },
+    );
+  }
+
   const updated = await patchConnection(endUserId, purpose, {
     spreadsheetId,
     spreadsheetLabel: String(spreadsheetLabel ?? spreadsheetId),
@@ -118,7 +132,7 @@ export async function DELETE(request: Request) {
 
     // Imported products came from this sheet; they should not outlive it.
     if (purpose === "catalogue") {
-      await clearImportedCatalogue();
+      await clearSheetProducts();
       revalidatePath("/", "layout");
     }
 

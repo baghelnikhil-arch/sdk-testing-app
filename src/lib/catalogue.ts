@@ -1,5 +1,3 @@
-import { products as staticProducts } from "@/data/products";
-import { readImportedCatalogue } from "./integration-store";
 import { slugify } from "./utils";
 import type { CategorySlug, Product, ProductColor } from "@/types";
 
@@ -295,34 +293,4 @@ export function mapRowsToProducts(rows: Record<string, unknown>[]): MappedRow[] 
 
     return { ok: true, product };
   });
-}
-
-/* ------------------------------------------------------------------ reading */
-
-export async function getImportedProducts(): Promise<Product[]> {
-  try {
-    const catalogue = await readImportedCatalogue();
-    return catalogue?.products ?? [];
-  } catch {
-    // Storage being unreachable or unconfigured must never take the shop down —
-    // the integration is additive, so the seed catalogue simply stands alone.
-    return [];
-  }
-}
-
-/**
- * The catalogue the storefront actually shows: the seed products plus whatever
- * the operator's sheet contributed. Imported products come first so a freshly
- * added row is visible without hunting for it.
- */
-export async function getCatalogueProducts(): Promise<Product[]> {
-  const imported = await getImportedProducts();
-  return imported.length > 0 ? [...imported, ...staticProducts] : staticProducts;
-}
-
-export async function getCatalogueProduct(
-  idOrSlug: string,
-): Promise<Product | undefined> {
-  const all = await getCatalogueProducts();
-  return all.find((p) => p.id === idOrSlug) ?? all.find((p) => p.slug === idOrSlug);
 }

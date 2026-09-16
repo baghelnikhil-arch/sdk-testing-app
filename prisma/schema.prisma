@@ -1,7 +1,5 @@
-// Storage for the Google Sheets integrations.
-//
-// Two tables, both narrow: one row per (end user, purpose) connection, and one
-// row per product imported from a sheet. Everything the app persists lives here.
+// All application data lives here: the catalogue the shop sells, the categories
+// it is organised by, its reviews, and the Google Sheets connections.
 
 generator client {
   provider = "prisma-client-js"
@@ -47,20 +45,76 @@ model Connection {
   updatedAt DateTime @updatedAt
 
   @@unique([endUserId, purpose])
+  @@index([spreadsheetId, sheetId])
 }
 
-/// A product read from the operator's spreadsheet.
+/// Everything the shop sells.
 ///
-/// Shop stock, not per-visitor data, so it is not keyed by end user. `data`
-/// holds the mapped Product exactly as the storefront renders it; the sheet is
-/// the source of truth and every import replaces the whole set.
-model ImportedProduct {
-  id   String @id
-  data Json
+/// `source` separates the two origins so a sheet import can replace its own
+/// products without touching the ones that ship with the store:
+/// `"seed"` came from the repository, `"sheet"` from an operator's spreadsheet.
+model Product {
+  id     String @id
+  source String @default("seed")
 
-  syncedAt          DateTime @default(now())
+  name        String
+  slug        String
+  category    String
+  description String
+
+  price         Float
+  originalPrice Float?
+  rating        Float  @default(0)
+  reviewCount   Int    @default(0)
+
+  images  String[]
+  sizes   String[]
+  tags    String[]
+  details String[]
+  /// [{ name, hex }]
+  colors  Json?
+  /// Free-form label → value pairs shown on the product page.
+  specifications Json?
+
+  featured   Boolean @default(false)
+  newArrival Boolean @default(false)
+  inStock    Boolean @default(true)
+
+  /// Preserves the order the seed data and the spreadsheet were written in.
+  position Int @default(0)
+
+  /// Where an imported product came from, for the settings screen.
   sourceSpreadsheet String?
   sourceSheet       String?
+  syncedAt          DateTime?
 
-  @@index([syncedAt])
+  reviews Review[]
+
+  @@index([source])
+  @@index([category])
+  @@index([slug])
+}
+
+/// The four edits the shop is organised by. Data, not routes.
+model Category {
+  slug        String @id
+  name        String
+  description String
+  tagline     String
+  image       String
+  position    Int    @default(0)
+}
+
+model Review {
+  id        String   @id
+  productId String
+  author    String
+  rating    Int
+  date      DateTime
+  title     String
+  body      String   @db.Text
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId])
 }

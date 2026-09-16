@@ -9,11 +9,10 @@ import { Button } from "@/components/ui/Button";
 import { Price } from "@/components/ui/Price";
 import { QuantitySelector } from "@/components/ui/QuantitySelector";
 import { Rating } from "@/components/ui/Rating";
-import { categoryBySlug } from "@/data/categories";
 import { MAX_QUANTITY, useCart } from "@/hooks/use-cart";
 import { useWishlist } from "@/hooks/use-wishlist";
 import { FREE_SHIPPING_THRESHOLD } from "@/lib/constants";
-import { cn, discountPercent, formatPrice } from "@/lib/utils";
+import { cn, discountPercent, formatCategory, formatPrice } from "@/lib/utils";
 import type { Product } from "@/types";
 
 export function ProductPurchasePanel({ product }: { product: Product }) {
@@ -26,8 +25,7 @@ export function ProductPurchasePanel({ product }: { product: Product }) {
   const [quantity, setQuantity] = useState(1);
 
   const discount = discountPercent(product.price, product.originalPrice);
-  const categoryName =
-    categoryBySlug.get(product.category)?.name ?? product.category;
+  const categoryName = formatCategory(product.category);
   const wishlisted = hydrated && isWishlisted(product.id);
 
   function buyNow() {

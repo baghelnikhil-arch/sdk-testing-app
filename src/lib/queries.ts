@@ -1,46 +1,16 @@
-import { products, productById, productBySlug } from "@/data/products";
-import { categories, categoryBySlug } from "@/data/categories";
-import type {
-  CategorySlug,
-  Product,
-  ProductFilters,
-  SortOption,
-} from "@/types";
+import type { CategorySlug, Product, ProductFilters, SortOption } from "@/types";
 
 /**
- * The seam between the UI and the data.
- *
- * Every screen reads products through this module rather than importing the
- * mock arrays directly. Replacing the mocks with a database or an HTTP API only
- * means changing the bodies of these functions (and making them async).
- */
-
-export function getAllProducts(): Product[] {
-  return products;
-}
-
-export function getProduct(idOrSlug: string): Product | undefined {
-  return productById.get(idOrSlug) ?? productBySlug.get(idOrSlug);
-}
-
-export function getCategories() {
-  return categories;
-}
-
-export function getCategory(slug: string) {
-  return categoryBySlug.get(slug as CategorySlug);
-}
-
-/**
- * Every list function takes the catalogue to read from, defaulting to the seed
- * data. Pages that include sheet-imported products pass the merged list from
- * `lib/catalogue.ts`; nothing else about them changes.
+ * Operations on a catalogue — pure, and deliberately holding no data of their
+ * own. Where the products come from is `lib/shop-data.ts` on the server and
+ * `/api/catalogue` in the browser; these functions work the same on either, so
+ * filtering and sorting behave identically in both places.
  */
 
 /** `new-arrivals` is a view over the catalogue, not a stored category. */
 export function getProductsByCategory(
   slug: CategorySlug,
-  source: Product[] = products,
+  source: Product[],
 ): Product[] {
   if (slug === "new-arrivals") {
     return source.filter((p) => p.newArrival);
@@ -48,22 +18,19 @@ export function getProductsByCategory(
   return source.filter((p) => p.category === slug);
 }
 
-export function getFeaturedProducts(
-  limit = 8,
-  source: Product[] = products,
-): Product[] {
+export function getFeaturedProducts(source: Product[], limit = 8): Product[] {
   return source.filter((p) => p.featured).slice(0, limit);
 }
 
-export function getNewArrivals(limit = 4, source: Product[] = products): Product[] {
+export function getNewArrivals(source: Product[], limit = 4): Product[] {
   return source.filter((p) => p.newArrival).slice(0, limit);
 }
 
 /** Same category first, then anything sharing a tag, then by rating. */
 export function getRelatedProducts(
   product: Product,
+  source: Product[],
   limit = 4,
-  source: Product[] = products,
 ): Product[] {
   const tags = new Set(product.tags ?? []);
 

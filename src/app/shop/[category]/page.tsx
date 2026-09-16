@@ -2,14 +2,18 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { ShopBrowser } from "@/components/shop/ShopBrowser";
 import { PageHeader } from "@/components/ui/PageHeader";
-import { getCategories, getCategory, getProductsByCategory } from "@/lib/queries";
-import { getCatalogueProducts } from "@/lib/catalogue";
+import { getProductsByCategory } from "@/lib/queries";
+import {
+  getCatalogueProducts,
+  getCategories,
+  getCategory,
+} from "@/lib/shop-data";
 
 type Params = Promise<{ category: string }>;
 
 /** Every category is known at build time, so all four pages are prerendered. */
-export function generateStaticParams() {
-  return getCategories().map((category) => ({ category: category.slug }));
+export async function generateStaticParams() {
+  return (await getCategories()).map((category) => ({ category: category.slug }));
 }
 
 export async function generateMetadata({
@@ -18,7 +22,7 @@ export async function generateMetadata({
   params: Params;
 }): Promise<Metadata> {
   const { category: slug } = await params;
-  const category = getCategory(slug);
+  const category = await getCategory(slug);
 
   if (!category) return { title: "Category not found" };
 
@@ -34,14 +38,14 @@ export default async function CategoryPage({
 }) {
   const { category: slug } = await params;
   const { q = "" } = await searchParams;
-  const category = getCategory(slug);
+  const [category, catalogue] = await Promise.all([
+    getCategory(slug),
+    getCatalogueProducts(),
+  ]);
 
   if (!category) notFound();
 
-  const products = getProductsByCategory(
-    category.slug,
-    await getCatalogueProducts(),
-  );
+  const products = getProductsByCategory(category.slug, catalogue);
 
   return (
     <>
@@ -59,6 +63,7 @@ export default async function CategoryPage({
         <ShopBrowser
           key={q}
           products={products}
+          categories={[]}
           initialQuery={q}
           lockedCategory={category.slug}
         />

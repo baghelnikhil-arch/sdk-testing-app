@@ -34,7 +34,7 @@ export async function POST(request: Request) {
   }
 
   // Prices come from the catalogue, never from the browser.
-  const { lines, totals } = rebuildOrder(items);
+  const { lines, totals } = await rebuildOrder(items);
   if (lines.length === 0) {
     return NextResponse.json(
       { error: "No recognisable products in the cart." },

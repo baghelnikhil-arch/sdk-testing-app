@@ -8,10 +8,9 @@ import { ProductGrid } from "@/components/product/ProductGrid";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Pagination } from "@/components/ui/Pagination";
 import { SearchBar } from "@/components/ui/SearchBar";
-import { PRICE_BOUNDS } from "@/data/products";
 import { filterProducts, paginate, sortProducts } from "@/lib/queries";
 import { PRODUCTS_PER_PAGE } from "@/lib/constants";
-import type { CategorySlug, Product, SortOption } from "@/types";
+import type { Category, CategorySlug, Product, SortOption } from "@/types";
 
 /**
  * The single product-browsing experience. `/shop` and every `/shop/[category]`
@@ -19,20 +18,29 @@ import type { CategorySlug, Product, SortOption } from "@/types";
  */
 export function ShopBrowser({
   products,
+  categories,
   initialQuery = "",
   initialSaleOnly = false,
   /** Set on category pages, where the category picker would be redundant. */
   lockedCategory,
 }: {
   products: Product[];
+  categories: Category[];
   initialQuery?: string;
   initialSaleOnly?: boolean;
   lockedCategory?: CategorySlug;
 }) {
+  // Derived from what is actually on sale rather than a hard-coded ceiling, so
+  // an imported product priced above the seed range stays reachable.
+  const priceMax = useMemo(() => {
+    const highest = products.reduce((max, p) => Math.max(max, p.price), 0);
+    return Math.max(50, Math.ceil(highest / 50) * 50);
+  }, [products]);
+
   const [filters, setFilters] = useState<FilterState>({
     query: initialQuery,
     categories: [],
-    maxPrice: PRICE_BOUNDS.max,
+    maxPrice: priceMax,
     minRating: 0,
     inStockOnly: false,
     onSaleOnly: initialSaleOnly,
@@ -82,7 +90,7 @@ export function ShopBrowser({
     setFilters({
       query: "",
       categories: [],
-      maxPrice: PRICE_BOUNDS.max,
+      maxPrice: priceMax,
       minRating: 0,
       inStockOnly: false,
       onSaleOnly: false,
@@ -90,7 +98,7 @@ export function ShopBrowser({
 
   const activeFilterCount =
     filters.categories.length +
-    (filters.maxPrice < PRICE_BOUNDS.max ? 1 : 0) +
+    (filters.maxPrice < priceMax ? 1 : 0) +
     (filters.minRating > 0 ? 1 : 0) +
     (filters.inStockOnly ? 1 : 0) +
     (filters.onSaleOnly ? 1 : 0);
@@ -100,7 +108,8 @@ export function ShopBrowser({
       filters={filters}
       onChange={updateFilters}
       onReset={resetFilters}
-      priceMax={PRICE_BOUNDS.max}
+      priceMax={priceMax}
+      categories={categories}
       showCategories={!lockedCategory}
       showTitle={showTitle}
     />

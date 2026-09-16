@@ -7,8 +7,7 @@ import { Price } from "@/components/ui/Price";
 import { Rating } from "@/components/ui/Rating";
 import { AddToCartButton } from "./AddToCartButton";
 import { WishlistButton } from "./WishlistButton";
-import { categoryBySlug } from "@/data/categories";
-import { cn, discountPercent } from "@/lib/utils";
+import { cn, discountPercent, formatCategory } from "@/lib/utils";
 import type { Product } from "@/types";
 
 /** Tells the browser how wide the image will actually be at each breakpoint. */
@@ -25,7 +24,7 @@ export function ProductCard({
   className?: string;
 }) {
   const discount = discountPercent(product.price, product.originalPrice);
-  const categoryName = categoryBySlug.get(product.category)?.name ?? product.category;
+  const categoryName = formatCategory(product.category);
   const secondImage = product.images[1];
 
   return (
