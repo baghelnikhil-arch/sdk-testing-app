@@ -48,7 +48,7 @@ src/
 ├── hooks/          use-cart, use-wishlist (Context + reducer, persisted)
 ├── lib/            queries.ts (data access), catalogue.ts (sheet → Product mapping),
 │                   cart.ts (pricing), viasocket.ts (server only), sync-catalogue.ts,
-│                   order-export.ts, integration-store.ts, end-user.ts, constants, utils
+│                   order-export.ts, db.ts + integration-store.ts (Prisma), end-user.ts
 └── types/          Domain types
 ```
 
@@ -267,43 +267,57 @@ tab: those ids live in the previous account's Drive. For the same reason
 `findEnabledApp` matches on `auth_id` as well as service, so a second account
 gets its own `script_id` rather than reusing the first one's.
 
-## Deploying
+## Database
 
-The storefront itself deploys anywhere with no configuration. The integrations
-need two things.
+Integration state lives in Postgres via Prisma — two tables, both narrow:
 
-**1. Durable storage.** Serverless filesystems are read-only and instances share
-nothing, so `.data/` cannot be used there — writing to it fails with
-`ENOENT: no such file or directory, mkdir '/var/task/.data'`. Add a Redis/KV
-integration (Vercel → Storage → Upstash works) so these are set:
+| Table | Holds |
+| --- | --- |
+| `Connection` | One row per (end user, purpose): the viaSocket ids and the chosen sheet. Unique on the pair, so the two integrations never collide. |
+| `ImportedProduct` | One row per product read from a sheet. Shop stock, so not keyed by user. |
 
 ```bash
-KV_REST_API_URL=...      # UPSTASH_REDIS_REST_URL is also accepted
-KV_REST_API_TOKEN=...    # UPSTASH_REDIS_REST_TOKEN is also accepted
+npm run db:push     # apply prisma/schema.prisma to the database
+npm run db:studio   # browse the data
 ```
 
-[`src/lib/kv.ts`](src/lib/kv.ts) picks the backend from the environment: Redis
-over HTTP when those exist, a JSON file otherwise. Nothing above it changes.
-Without storage on a serverless host the settings page explains the problem
-instead of erroring, and the shop keeps working — the integration is additive.
+`DATABASE_URL` is the **pooled** endpoint and is what the app uses — serverless
+functions come and go constantly and would exhaust a connection limit without a
+pooler. `DIRECT_URL` is the unpooled one and is used only for migrations, which
+need a real session. `prisma generate` runs on `postinstall`, so any host builds
+the client automatically.
 
-**2. The viaSocket secret.** Set `VIASOCKET_EMBED_SECRET` in the host's
-environment variables, never in a committed file.
+Every import replaces the whole product set inside one transaction: the sheet is
+the source of truth, which makes the operation idempotent and lets rows deleted
+from the sheet disappear from the shop without the shop ever being briefly empty.
+
+## Deploying
+
+Set these in the host's environment variables — never in a committed file:
+
+```bash
+DATABASE_URL=            # pooled Postgres URL
+DIRECT_URL=              # unpooled, for migrations
+VIASOCKET_EMBED_SECRET=  # from the viaSocket Install Code page
+```
 
 `APP_PUBLIC_URL` is detected automatically on Vercel from
-`VERCEL_PROJECT_PRODUCTION_URL`, so live updates work after the first production
-deploy without setting anything. The per-deployment host (`VERCEL_URL`) is
-deliberately ignored: it changes on every push, and the webhook is registered
-once with whatever URL was current at subscribe time.
+`VERCEL_PROJECT_PRODUCTION_URL`, so live catalogue updates work after the first
+production deploy without setting anything. The per-deployment host
+(`VERCEL_URL`) is deliberately ignored: it changes on every push, and the webhook
+is registered once with whatever URL was current at subscribe time.
+
+Without a database the settings page says so plainly and the shop keeps working —
+the integration is additive, so an unconfigured integration never takes the
+storefront down.
 
 ### Replacing the storage seam
 
-[`src/lib/kv.ts`](src/lib/kv.ts) is the whole of it: three methods, `get` / `set`
-/ `del`. [`integration-store.ts`](src/lib/integration-store.ts) sits on top,
-keyed per user (`integration:<id>`) rather than as one document, so two
-concurrent serverless invocations cannot read-modify-write over each other. A
-`webhooktoken:<token>` index maps unsigned webhook deliveries back to their owner
-without scanning.
+[`src/lib/db.ts`](src/lib/db.ts) owns the client and
+[`integration-store.ts`](src/lib/integration-store.ts) is the only module that
+queries it — every route and page goes through those functions, never through
+Prisma directly. `webhookToken` is unique in the schema, so attributing an
+unsigned webhook delivery is one indexed lookup rather than a scan.
 
 ### What was verified
 
@@ -313,11 +327,11 @@ matching, currency parsing, unknown categories, per-row skip reasons, and the
 imported products then appearing in the shop, on their own product page and in
 the cart. Webhook token authentication was checked (valid 200, wrong and missing
 404), as was the guard that refuses to subscribe without `APP_PUBLIC_URL`.
-Records written before purposes existed migrate to `orders` and keep working, as
-do `.data/` files written before the KV seam existed. Both storage backends were
-exercised: the file backend still resolves legacy data, and the Redis backend was
-driven through a full read-modify-write round trip against a stub, with one
-purpose's changes leaving the other untouched.
+Postgres was exercised against the real database: connections read back through
+the API, a catalogue import wrote rows inside its transaction, the storefront and
+`/api/catalogue` served them, and three consecutive imports left three products
+rather than nine — confirming replace-not-append. `prisma generate` was checked
+with no database variables set, which is what a build host does.
 
 The connect popup and `list-options` need a real secret and were not exercised
 against viaSocket.

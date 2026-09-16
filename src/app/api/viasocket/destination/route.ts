@@ -12,7 +12,7 @@ import {
   revokeConnection,
   setFlowStatus,
 } from "@/lib/viasocket";
-import { storageKind } from "@/lib/kv";
+import { isDatabaseConfigured } from "@/lib/db";
 import { clearImportedCatalogue } from "@/lib/integration-store";
 import { revalidatePath } from "next/cache";
 
@@ -24,7 +24,7 @@ export async function GET(request: Request) {
   }
 
   const endUserId = await peekEndUserId();
-  const storage = storageKind();
+  const storage = isDatabaseConfigured() ? "database" : "none";
 
   // A missing store is reported, not thrown: the settings page should explain
   // the problem rather than render an error.

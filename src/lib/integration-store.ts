@@ -1,21 +1,21 @@
-import { delKey, getJSON, setJSON } from "./kv";
+import type { Prisma } from "@prisma/client";
+import { db } from "./db";
 import type { Product } from "@/types";
 
 /**
- * Integration state, on top of the KV seam in `lib/kv.ts`.
+ * Integration state, in Postgres.
  *
- * Keys are per user rather than one big document: two serverless invocations
- * handling two people must not read-modify-write the same blob and clobber each
- * other.
+ * Rows are keyed by (endUserId, purpose), so two concurrent requests for two
+ * different people — or for one person's two connections — never contend.
  *
- * `scriptId` is a credential — anyone holding it can run Google Sheets as this
- * user — so it is stored server-side and never sent to the browser.
+ * `scriptId` is a credential: anyone holding it can run Google Sheets as this
+ * user. It stays server-side and is never returned to the browser.
  */
 
 /**
- * Integrations are keyed by purpose, not just by user. Exporting orders and
- * importing the catalogue are separate connections: different Google accounts,
- * different spreadsheets, connected and disconnected independently.
+ * Exporting orders and importing the catalogue are separate connections:
+ * different Google accounts, different spreadsheets, connected and disconnected
+ * independently.
  */
 export type Purpose = "orders" | "catalogue";
 export const PURPOSES: Purpose[] = ["orders", "catalogue"];
@@ -28,66 +28,110 @@ export type Connection = {
   sheetId?: string;
   sheetLabel?: string;
   connectedAt: string;
-  /** orders: when a cart was last written out. */
   lastExportAt?: string;
-  /** catalogue: when rows were last pulled in. */
   lastSyncAt?: string;
   lastSyncCount?: number;
-  /** catalogue: the trigger subscription's own script_id, if one exists. */
   subscriptionId?: string;
-  /** catalogue: shared secret in the webhook URL, since events are unsigned. */
   webhookToken?: string;
 };
 
-type UserRecord = Partial<Record<Purpose, Connection>>;
+type Row = {
+  authId: string;
+  scriptId: string;
+  spreadsheetId: string | null;
+  spreadsheetLabel: string | null;
+  sheetId: string | null;
+  sheetLabel: string | null;
+  connectedAt: Date;
+  lastExportAt: Date | null;
+  lastSyncAt: Date | null;
+  lastSyncCount: number | null;
+  subscriptionId: string | null;
+  webhookToken: string | null;
+};
 
-const userKey = (endUserId: string) => `integration:${endUserId}`;
-/** Index, so an unsigned webhook can be attributed without scanning every user. */
-const tokenKey = (token: string) => `webhooktoken:${token}`;
-const CATALOGUE_KEY = "catalogue";
-
-/** Records written before purposes existed were order-export connections. */
-function migrate(record: unknown): UserRecord {
-  if (!record || typeof record !== "object") return {};
-  if ("authId" in (record as Record<string, unknown>)) {
-    return { orders: record as Connection };
-  }
-  return record as UserRecord;
+/** Nulls are a database detail; the rest of the app works in optionals. */
+function toConnection(row: Row): Connection {
+  return {
+    authId: row.authId,
+    scriptId: row.scriptId,
+    spreadsheetId: row.spreadsheetId ?? undefined,
+    spreadsheetLabel: row.spreadsheetLabel ?? undefined,
+    sheetId: row.sheetId ?? undefined,
+    sheetLabel: row.sheetLabel ?? undefined,
+    connectedAt: row.connectedAt.toISOString(),
+    lastExportAt: row.lastExportAt?.toISOString(),
+    lastSyncAt: row.lastSyncAt?.toISOString(),
+    lastSyncCount: row.lastSyncCount ?? undefined,
+    subscriptionId: row.subscriptionId ?? undefined,
+    webhookToken: row.webhookToken ?? undefined,
+  };
 }
 
-async function readUser(endUserId: string): Promise<UserRecord> {
-  return migrate(await getJSON<unknown>(userKey(endUserId)));
+const DATE_FIELDS = ["lastExportAt", "lastSyncAt"] as const;
+
+/**
+ * Turns a patch into column values.
+ *
+ * `undefined` in a patch means "clear this" — that is how the reconnect flow
+ * wipes a stale sheet — so it maps to SQL NULL rather than being skipped.
+ */
+function toColumns(patch: Partial<Connection>) {
+  const data: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(patch)) {
+    if (key === "connectedAt") continue;
+    if ((DATE_FIELDS as readonly string[]).includes(key)) {
+      data[key] = value ? new Date(value as string) : null;
+      continue;
+    }
+    data[key] = value ?? null;
+  }
+  return data;
 }
 
 export async function getConnection(
   endUserId: string,
   purpose: Purpose,
 ): Promise<Connection | null> {
-  return (await readUser(endUserId))[purpose] ?? null;
+  const row = await db().connection.findUnique({
+    where: { endUserId_purpose: { endUserId, purpose } },
+  });
+  return row ? toConnection(row) : null;
 }
 
-export async function getConnections(endUserId: string): Promise<UserRecord> {
-  return readUser(endUserId);
+export async function getConnections(
+  endUserId: string,
+): Promise<Partial<Record<Purpose, Connection>>> {
+  const rows = await db().connection.findMany({ where: { endUserId } });
+  return Object.fromEntries(
+    rows.map((row) => [row.purpose as Purpose, toConnection(row)]),
+  );
 }
 
-/** Shallow-merges into the existing connection, creating it when absent. */
+/** Creates the connection, or merges into it when one already exists. */
 export async function saveConnection(
   endUserId: string,
   purpose: Purpose,
   patch: Partial<Connection> & Pick<Connection, "authId" | "scriptId">,
 ): Promise<Connection> {
-  const user = await readUser(endUserId);
-  const existing = user[purpose];
+  const columns = toColumns(patch);
 
-  const next: Connection = {
-    ...existing,
-    ...patch,
-    // Set on first connect, preserved on every reconnect.
-    connectedAt: existing?.connectedAt ?? new Date().toISOString(),
-  };
+  const row = await db().connection.upsert({
+    where: { endUserId_purpose: { endUserId, purpose } },
+    // connectedAt defaults on insert and is never touched again, so it records
+    // when this account was first linked rather than when it last changed.
+    create: {
+      endUserId,
+      purpose,
+      authId: patch.authId,
+      scriptId: patch.scriptId,
+      ...columns,
+    },
+    update: columns,
+  });
 
-  await writeUser(endUserId, { ...user, [purpose]: next }, existing);
-  return next;
+  return toConnection(row);
 }
 
 /** Updates a connection that must already exist; returns null if it does not. */
@@ -96,64 +140,48 @@ export async function patchConnection(
   purpose: Purpose,
   patch: Partial<Connection>,
 ): Promise<Connection | null> {
-  const user = await readUser(endUserId);
-  const existing = user[purpose];
-  if (!existing) return null;
-
-  const next = { ...existing, ...patch };
-  await writeUser(endUserId, { ...user, [purpose]: next }, existing);
-  return next;
+  try {
+    const row = await db().connection.update({
+      where: { endUserId_purpose: { endUserId, purpose } },
+      data: toColumns(patch),
+    });
+    return toConnection(row);
+  } catch {
+    return null;
+  }
 }
 
 export async function clearConnection(endUserId: string, purpose: Purpose) {
-  const user = await readUser(endUserId);
-  const existing = user[purpose];
-  delete user[purpose];
-
-  await writeUser(endUserId, user, existing);
+  await db()
+    .connection.delete({
+      where: { endUserId_purpose: { endUserId, purpose } },
+    })
+    .catch(() => null);
 }
 
-/** Writes the record and keeps the webhook-token index in step with it. */
-async function writeUser(
-  endUserId: string,
-  next: UserRecord,
-  previous?: Connection,
-) {
-  await setJSON(userKey(endUserId), next);
-
-  const nextToken = next.catalogue?.webhookToken;
-  const previousToken = previous?.webhookToken;
-
-  if (previousToken && previousToken !== nextToken) {
-    await delKey(tokenKey(previousToken));
-  }
-  if (nextToken && nextToken !== previousToken) {
-    await setJSON(tokenKey(nextToken), endUserId);
-  }
-}
-
-/** Finds the owner of a webhook token, so unsigned events can be attributed. */
+/**
+ * Finds the owner of a webhook token, so unsigned events can be attributed.
+ *
+ * `webhookToken` is unique in the schema, which makes this a single indexed
+ * lookup rather than a scan.
+ */
 export async function findByWebhookToken(
   token: string,
 ): Promise<{ endUserId: string; connection: Connection } | null> {
   if (!token) return null;
 
-  const endUserId = await getJSON<string>(tokenKey(token));
-  if (!endUserId) return null;
+  const row = await db().connection.findUnique({ where: { webhookToken: token } });
+  if (!row || row.purpose !== "catalogue") return null;
 
-  const connection = await getConnection(endUserId, "catalogue");
-  // The index can outlive the connection; treat a dangling entry as unknown.
-  if (!connection || connection.webhookToken !== token) return null;
-
-  return { endUserId, connection };
+  return { endUserId: row.endUserId, connection: toConnection(row) };
 }
 
 /* ---------------------------------------------------------------------------
  * Imported catalogue.
  *
- * Stored under one key rather than per user: products imported from a sheet are
- * the shop's stock, visible to every visitor, not private to whoever connected
- * the account.
+ * Shop stock, not per-visitor data, so it is not keyed by end user. Every import
+ * replaces the whole set: the sheet is the source of truth, which makes the
+ * operation idempotent and lets deleted rows disappear from the shop.
  * ------------------------------------------------------------------------- */
 
 export type ImportedCatalogue = {
@@ -163,16 +191,44 @@ export type ImportedCatalogue = {
 };
 
 export async function readImportedCatalogue(): Promise<ImportedCatalogue | null> {
-  return getJSON<ImportedCatalogue>(CATALOGUE_KEY);
+  const rows = await db().importedProduct.findMany({
+    orderBy: { id: "asc" },
+  });
+  if (rows.length === 0) return null;
+
+  const newest = rows.reduce(
+    (latest, row) => (row.syncedAt > latest ? row.syncedAt : latest),
+    rows[0].syncedAt,
+  );
+
+  return {
+    products: rows.map((row) => row.data as unknown as Product),
+    syncedAt: newest.toISOString(),
+    source:
+      rows[0].sourceSpreadsheet && rows[0].sourceSheet
+        ? { spreadsheet: rows[0].sourceSpreadsheet, sheet: rows[0].sourceSheet }
+        : undefined,
+  };
 }
 
 export async function writeImportedCatalogue(value: ImportedCatalogue) {
-  await setJSON(CATALOGUE_KEY, value);
+  const syncedAt = new Date(value.syncedAt);
+
+  // One transaction, so the shop is never briefly empty mid-import.
+  await db().$transaction([
+    db().importedProduct.deleteMany({}),
+    db().importedProduct.createMany({
+      data: value.products.map((product) => ({
+        id: product.id,
+        data: product as unknown as Prisma.InputJsonValue,
+        syncedAt,
+        sourceSpreadsheet: value.source?.spreadsheet ?? null,
+        sourceSheet: value.source?.sheet ?? null,
+      })),
+    }),
+  ]);
 }
 
 export async function clearImportedCatalogue() {
-  await writeImportedCatalogue({
-    products: [],
-    syncedAt: new Date().toISOString(),
-  });
+  await db().importedProduct.deleteMany({});
 }

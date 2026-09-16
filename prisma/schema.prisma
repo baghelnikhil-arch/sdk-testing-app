@@ -1,0 +1,66 @@
+// Storage for the Google Sheets integrations.
+//
+// Two tables, both narrow: one row per (end user, purpose) connection, and one
+// row per product imported from a sheet. Everything the app persists lives here.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Prisma 7 keeps connection URLs out of the schema: migrations read them from
+// prisma.config.ts, and the runtime client gets them through a driver adapter.
+datasource db {
+  provider = "postgresql"
+}
+
+/// One connected Google account, scoped to what it is used for.
+///
+/// A person may connect one account to read the catalogue and a different one to
+/// write orders, so the unique key is the pair, not the user alone.
+model Connection {
+  id        String @id @default(cuid())
+  endUserId String
+  /// "orders" | "catalogue"
+  purpose   String
+
+  /// viaSocket authentication id. Not a Google token — viaSocket holds those.
+  authId   String
+  /// Credential: anyone holding it can run Google Sheets as this user.
+  scriptId String
+
+  spreadsheetId    String?
+  spreadsheetLabel String?
+  sheetId          String?
+  sheetLabel       String?
+
+  connectedAt  DateTime  @default(now())
+  lastExportAt DateTime?
+
+  lastSyncAt    DateTime?
+  lastSyncCount Int?
+
+  /// The trigger subscription's own script_id — the only handle to it.
+  subscriptionId String?
+  /// Shared secret in the webhook URL, because viaSocket does not sign events.
+  webhookToken   String?  @unique
+
+  updatedAt DateTime @updatedAt
+
+  @@unique([endUserId, purpose])
+}
+
+/// A product read from the operator's spreadsheet.
+///
+/// Shop stock, not per-visitor data, so it is not keyed by end user. `data`
+/// holds the mapped Product exactly as the storefront renders it; the sheet is
+/// the source of truth and every import replaces the whole set.
+model ImportedProduct {
+  id   String @id
+  data Json
+
+  syncedAt          DateTime @default(now())
+  sourceSpreadsheet String?
+  sourceSheet       String?
+
+  @@index([syncedAt])
+}

@@ -93,9 +93,9 @@ export function SheetsConnectionCard({
         <p className="mt-6 flex items-start gap-2.5 rounded-md border border-sale/25 bg-sale/5 px-4 py-3 text-sm text-sale">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
           <span>
-            <span className="font-medium">No storage is configured.</span>{" "}
-            Connections cannot be saved on a serverless host without one. Add a
-            Redis or KV integration to the project, then redeploy.
+            <span className="font-medium">No database is configured.</span>{" "}
+            Set <code>DATABASE_URL</code> in the environment so connections can be
+            saved, then redeploy.
           </span>
         </p>
       )}
