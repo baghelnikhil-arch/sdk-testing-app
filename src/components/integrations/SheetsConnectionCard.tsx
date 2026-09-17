@@ -229,17 +229,4 @@ export function SheetsConnectionCard({
   );
 }
 
-/** The order-export connection. */
-export function OrderExportCard() {
-  const sheets = useGoogleSheets("orders");
-  return (
-    <SheetsConnectionCard
-      sheets={sheets}
-      title="Order export"
-      blurb="Send every order to a spreadsheet as it is placed — one row per item, with totals. Headers are created automatically the first time."
-      destinationLabel="Orders go to"
-    />
-  );
-}
-
 export type { Purpose };

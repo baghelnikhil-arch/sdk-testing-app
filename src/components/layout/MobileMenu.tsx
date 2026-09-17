@@ -146,13 +146,13 @@ export function MobileMenu({
                 {user.role === "admin" && (
                   <li>
                     <Link
-                      href="/settings/integrations"
+                      href="/admin"
                       onClick={onClose}
-                      className={linkClass("/settings/integrations")}
+                      className={linkClass("/admin")}
                     >
                       <span className="flex items-center gap-2.5">
                         <Settings className="h-4 w-4" aria-hidden="true" />
-                        Integrations
+                        Admin
                       </span>
                     </Link>
                   </li>

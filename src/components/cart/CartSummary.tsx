@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
 import { AlertCircle, Check, Loader2, Lock } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { FREE_SHIPPING_THRESHOLD } from "@/lib/constants";
@@ -184,18 +183,6 @@ export function CartSummary({
           <p className="rounded-md bg-muted px-4 py-3 text-sm text-muted-foreground">
             This is a demo storefront — checkout is not connected to a payment
             provider.
-            {outcome?.kind === "not-configured" && (
-              <>
-                {" "}
-                <Link
-                  href="/settings/integrations"
-                  className="font-medium text-foreground underline underline-offset-4 transition-colors hover:text-primary"
-                >
-                  Connect Google Sheets
-                </Link>{" "}
-                to export orders to a spreadsheet.
-              </>
-            )}
           </p>
         </div>
       ) : (

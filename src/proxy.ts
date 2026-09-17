@@ -15,7 +15,7 @@ import { NextResponse, type NextRequest } from "next/server";
 const SESSION_COOKIE = "aurelle_session";
 
 /** Signed-in only. Browsing the shop stays open to everyone. */
-const PROTECTED = ["/account", "/settings"];
+const PROTECTED = ["/account", "/admin", "/settings"];
 
 /** Pointless once signed in. */
 const AUTH_ROUTES = ["/login", "/signup"];

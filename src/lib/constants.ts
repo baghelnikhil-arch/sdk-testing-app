@@ -36,7 +36,7 @@ export const FOOTER_SECTIONS = [
     links: [
       { href: "/about", label: "About" },
       { href: "/contact", label: "Contact" },
-      { href: "/settings/integrations", label: "Integrations" },
+      { href: "/admin", label: "Admin" },
     ],
   },
   {

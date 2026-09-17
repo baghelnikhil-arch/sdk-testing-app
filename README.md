@@ -31,7 +31,7 @@ The first account you create becomes the shop administrator.
 | `/contact`          | Dynamic   | Simulated submit, no network call             |
 | `/login`, `/signup` | Dynamic | Sign in and register |
 | `/account`          | Dynamic | Your orders; signed-in only |
-| `/settings/integrations` | Dynamic | Both connections; **administrators only** |
+| `/admin`            | Dynamic | Shop stats and the product-catalogue connection; **administrators only** |
 | `/api/viasocket/*`  | Dynamic   | Server-only bridge to viaSocket (see below)   |
 | `not-found`         | Dynamic   | Custom 404                                    |
 
@@ -164,13 +164,14 @@ and Escape-to-close were checked.
 
 ## Google Sheets integrations (viaSocket)
 
-Two **independent** connections on `/settings/integrations`, each with its own
-Google account and its own spreadsheet:
+Two **independent** connections, each with its own Google account and its own
+spreadsheet. Only the catalogue one is managed through the interface, on
+`/admin`:
 
-| Connection | Direction | Action used |
-| --- | --- | --- |
-| **Product catalogue** | Sheet → shop | `List Rows in Sheet` + `Row Added Or Updated` |
-| **Order export** | Shop → sheet | `Add Multiple Rows` |
+| Connection | Direction | Action used | Where |
+| --- | --- | --- | --- |
+| **Product catalogue** | Sheet → shop | `List Rows in Sheet` + `Row Added Or Updated` | managed on `/admin` |
+| **Order export** | Shop → sheet | `Add Multiple Rows` | runs automatically, no UI |
 
 They are separate on purpose: a shop may read products from a merchandising
 sheet owned by one person and write orders to a finance sheet owned by another.
@@ -378,6 +379,10 @@ owner. Safe to re-run.
 - **Sessions are stored, not signed.** The browser holds an opaque random token;
   every check looks it up. That costs a query and buys real revocation — signing
   out invalidates immediately, which a self-contained JWT cannot.
+- **`/admin` is guarded twice.** `src/proxy.ts` redirects anyone without a
+  session cookie, and the page itself checks `role === "admin"` against the
+  database before rendering anything. A customer who reaches the URL gets an
+  explanation, not the controls.
 - **Two layers of checking.** `src/proxy.ts` (Next 16 renamed `middleware.ts` to
   `proxy.ts`) does the *optimistic* check: it only asks whether a session cookie
   exists, because it runs on every request including prefetches and must not

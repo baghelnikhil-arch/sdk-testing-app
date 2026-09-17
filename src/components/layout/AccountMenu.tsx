@@ -93,12 +93,12 @@ export function AccountMenu({ user }: { user: NavUser | null }) {
             {/* Integrations belong to whoever runs the shop, not to shoppers. */}
             {user.role === "admin" && (
               <Link
-                href="/settings/integrations"
+                href="/admin"
                 className={ITEM}
                 onClick={() => setOpen(false)}
               >
                 <Settings className="h-4 w-4" aria-hidden="true" />
-                Integrations
+                Admin
               </Link>
             )}
 

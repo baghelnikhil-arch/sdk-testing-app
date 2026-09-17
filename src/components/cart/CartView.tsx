@@ -4,7 +4,6 @@ import Link from "next/link";
 import { ArrowLeft, ShoppingBag } from "lucide-react";
 import { CartItem } from "./CartItem";
 import { CartSummary } from "./CartSummary";
-import { CheckoutSheetsPanel } from "./CheckoutSheetsPanel";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ProductGridSkeleton } from "@/components/product/ProductGrid";
 import { useCart } from "@/hooks/use-cart";
@@ -79,9 +78,8 @@ export function CartView() {
           </div>
         </div>
 
-        <div className="flex flex-col gap-5 lg:sticky lg:top-28 lg:self-start">
+        <div className="lg:sticky lg:top-28 lg:self-start">
           <CartSummary totals={totals} items={items} />
-          <CheckoutSheetsPanel />
         </div>
       </div>
     </div>

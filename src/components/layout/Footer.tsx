@@ -31,7 +31,7 @@ export function Footer({
               ...section,
               // Only the people who can use it should be sent there.
               links: section.links.filter(
-                (link) => isAdmin || link.href !== "/settings/integrations",
+                (link) => isAdmin || link.href !== "/admin",
               ),
             }
           : section,
