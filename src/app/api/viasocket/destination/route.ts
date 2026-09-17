@@ -10,6 +10,7 @@ import { purposeFromSearch } from "@/lib/purpose";
 import {
   ViasocketNotConfiguredError,
   isConfigured,
+  isFlowActive,
   revokeConnection,
   setFlowStatus,
 } from "@/lib/viasocket";
@@ -38,6 +39,32 @@ export async function GET(request: Request) {
     storageError = (error as Error).message;
   }
 
+  /*
+   * "Live updates on" used to mean nothing more than a non-empty column, which
+   * is how this shop sat for days believing it was subscribed while viaSocket
+   * had long since replaced the flow and stopped delivering. The claim is now
+   * checked against viaSocket, and a subscription that has gone is forgotten so
+   * the switch reads off and can be turned back on.
+   */
+  let watching = Boolean(connection?.subscriptionId);
+  if (connection?.subscriptionId) {
+    try {
+      watching = await isFlowActive(
+        connection.endUserId,
+        connection.subscriptionId,
+      );
+      if (!watching) {
+        await patchConnection(connection.endUserId, purpose, {
+          subscriptionId: undefined,
+          webhookToken: undefined,
+        });
+      }
+    } catch {
+      // viaSocket being unreachable is not evidence either way; say nothing
+      // changed rather than reporting a working subscription as dead.
+    }
+  }
+
   return NextResponse.json({
     configured: isConfigured(),
     storage,
@@ -49,7 +76,7 @@ export async function GET(request: Request) {
     lastExportAt: connection?.lastExportAt ?? null,
     lastSyncAt: connection?.lastSyncAt ?? null,
     lastSyncCount: connection?.lastSyncCount ?? null,
-    watching: Boolean(connection?.subscriptionId),
+    watching,
   });
 }
 

@@ -6,6 +6,7 @@ import {
   FIELDS,
   ROW_ADDED_TRIGGER,
   ViasocketNotConfiguredError,
+  isFlowActive,
   setFlowStatus,
   subscribeEvent,
 } from "@/lib/viasocket";
@@ -85,8 +86,19 @@ export async function POST() {
       return NextResponse.json({ error: base.error }, { status: 400 });
     }
 
+    /*
+     * Only skip the work if the stored subscription is genuinely still there.
+     * Trusting the column alone made this button a no-op in exactly the case it
+     * exists for: viaSocket had replaced the flow, the app still held the old
+     * script_id, and pressing "live updates" cheerfully reported success while
+     * subscribing to nothing.
+     */
     if (connection.subscriptionId) {
-      return NextResponse.json({ watching: true });
+      const stillActive = await isFlowActive(
+        connection.endUserId,
+        connection.subscriptionId,
+      );
+      if (stillActive) return NextResponse.json({ watching: true });
     }
 
     const webhookToken = randomBytes(24).toString("hex");

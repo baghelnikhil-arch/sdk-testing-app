@@ -143,6 +143,22 @@ export async function listUserFlows(endUserId: string): Promise<Flow[]> {
 }
 
 /**
+ * Whether a subscription still exists on viaSocket's side.
+ *
+ * It frequently does not. viaSocket replaces a trigger flow rather than
+ * refreshing it — the old script_id is marked `deleted` and a new one appears —
+ * and nothing notifies us, so a stored subscriptionId is a claim to be checked,
+ * never proof that events are still being delivered.
+ */
+export async function isFlowActive(
+  endUserId: string,
+  scriptId: string,
+): Promise<boolean> {
+  const flows = await listUserFlows(endUserId);
+  return flows.some((flow) => flow.id === scriptId && flow.status === "active");
+}
+
+/**
  * The script_id of an app this user already enabled, or null.
  *
  * Matching on `auth_id` as well as service matters: a user who connects a second
