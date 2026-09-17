@@ -1,9 +1,9 @@
 import type { Category } from "@/types";
-import { img } from "./images";
+import { img } from "../../src/lib/images";
 
 /**
- * Categories are data, not routes. `/shop/[category]` reads from this list, so
- * adding a category here immediately produces a working page.
+ * Seed categories. `/shop/[category]` reads them from the database, so adding one
+ * here takes effect on the next `npm run db:seed`.
  */
 export const categories: Category[] = [
   {
@@ -39,5 +39,3 @@ export const categories: Category[] = [
     image: img("photo-1490481651871-ab68de25d43d", 900, 1100),
   },
 ];
-
-export const categoryBySlug = new Map(categories.map((c) => [c.slug, c]));

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { requireEndUserId } from "@/lib/end-user";
-import { getConnection } from "@/lib/integration-store";
+import { authErrorResponse, requireAdmin } from "@/lib/auth";
+import { getAdminConnection } from "@/lib/integration-store";
 import { parsePurpose } from "@/lib/purpose";
 import {
   ADD_ROWS_ACTION,
@@ -26,7 +26,7 @@ const SOURCES = {
 
 export async function POST(request: Request) {
   try {
-    const endUserId = await requireEndUserId();
+    const admin = await requireAdmin();
     const { field, spreadsheetId, purpose: rawPurpose } = await request.json();
     const purpose = parsePurpose(rawPurpose);
 
@@ -40,7 +40,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const connection = await getConnection(endUserId, purpose);
+    const connection = await getAdminConnection(admin, purpose);
     if (!connection) {
       return NextResponse.json(
         { error: "Google Sheets is not connected yet." },
@@ -52,7 +52,7 @@ export async function POST(request: Request) {
 
     if (field === "spreadsheet") {
       const { options } = await listOptions(
-        endUserId,
+        connection.endUserId,
         action,
         fields.spreadsheet,
         {},
@@ -71,7 +71,7 @@ export async function POST(request: Request) {
     // A tab is only meaningful inside a spreadsheet, so the parent is passed as
     // a dependency. Sending `{}` here returns nothing, not an error.
     const { options } = await listOptions(
-      endUserId,
+      connection.endUserId,
       action,
       fields.sheet,
       { [fields.spreadsheet]: spreadsheetId },
@@ -79,6 +79,10 @@ export async function POST(request: Request) {
     );
     return NextResponse.json({ options });
   } catch (error) {
+    const denied = authErrorResponse(error);
+    if (denied) {
+      return NextResponse.json({ error: denied.error }, { status: denied.status });
+    }
     if (error instanceof ViasocketNotConfiguredError) {
       return NextResponse.json({ error: error.message }, { status: 503 });
     }

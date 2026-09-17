@@ -1,8 +1,10 @@
 /**
- * Central image helper.
+ * Builds image URLs for the placeholder photography used by the marketing pages
+ * and the seed catalogue.
  *
- * Every product image goes through here, so swapping the placeholder host for a
- * real CDN later is a one-line change.
+ * One host, in one place, so pointing at a real CDN later is a single edit.
+ * Product images imported from a spreadsheet do not come through here — those
+ * are whatever URL the operator typed.
  */
 const HOST = "https://images.unsplash.com";
 

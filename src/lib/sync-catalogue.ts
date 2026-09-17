@@ -1,8 +1,8 @@
 import { revalidatePath } from "next/cache";
 import {
   findSheetConflict,
-  getConnection,
   patchConnection,
+  type Connection,
 } from "./integration-store";
 import { countSheetProducts, replaceSheetProducts } from "./shop-data";
 import { extractRows, mapRowsToProducts, usesFallbackImage } from "./catalogue";
@@ -30,10 +30,8 @@ export type SyncResult = {
  * a single row event — which matters because the event payload has no published
  * schema.
  */
-export async function syncCatalogue(endUserId: string): Promise<SyncResult> {
-  const connection = await getConnection(endUserId, "catalogue");
-
-  if (!connection?.spreadsheetId || !connection?.sheetId) {
+export async function syncCatalogue(connection: Connection): Promise<SyncResult> {
+  if (!connection.spreadsheetId || !connection.sheetId) {
     throw new Error("No product sheet is selected.");
   }
 
@@ -104,7 +102,7 @@ export async function syncCatalogue(endUserId: string): Promise<SyncResult> {
     sheet: connection.sheetLabel ?? connection.sheetId,
   });
 
-  await patchConnection(endUserId, "catalogue", {
+  await patchConnection(connection.endUserId, "catalogue", {
     lastSyncAt: new Date().toISOString(),
     lastSyncCount: kept.length,
   });

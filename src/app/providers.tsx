@@ -3,17 +3,29 @@
 import { CatalogueProvider } from "@/hooks/use-catalogue";
 import { CartProvider } from "@/hooks/use-cart";
 import { WishlistProvider } from "@/hooks/use-wishlist";
+import { SessionProvider, type SessionUser } from "@/hooks/use-session";
 
 /**
- * One place to mount client-side stores. Adding auth or a toast system later
- * means wrapping here, not touching the layout.
+ * One place to mount client-side stores.
+ *
+ * `user` comes from the root layout, which verified the session against the
+ * database. The cart and wishlist read it to decide whether they belong to an
+ * account or to this browser.
  */
-export function Providers({ children }: { children: React.ReactNode }) {
+export function Providers({
+  user,
+  children,
+}: {
+  user: SessionUser | null;
+  children: React.ReactNode;
+}) {
   return (
-    <CatalogueProvider>
-      <CartProvider>
-        <WishlistProvider>{children}</WishlistProvider>
-      </CartProvider>
-    </CatalogueProvider>
+    <SessionProvider user={user}>
+      <CatalogueProvider>
+        <CartProvider>
+          <WishlistProvider>{children}</WishlistProvider>
+        </CartProvider>
+      </CatalogueProvider>
+    </SessionProvider>
   );
 }

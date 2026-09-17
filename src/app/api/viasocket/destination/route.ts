@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
-import { peekEndUserId, requireEndUserId } from "@/lib/end-user";
+import { authErrorResponse, getCurrentUser, requireAdmin } from "@/lib/auth";
 import {
   clearConnection,
   findSheetConflict,
-  getConnection,
+  getAdminConnection,
   patchConnection,
 } from "@/lib/integration-store";
 import { purposeFromSearch } from "@/lib/purpose";
@@ -24,7 +24,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Unknown purpose" }, { status: 400 });
   }
 
-  const endUserId = await peekEndUserId();
+  const user = await getCurrentUser();
   const storage = isDatabaseConfigured() ? "database" : "none";
 
   // A missing store is reported, not thrown: the settings page should explain
@@ -32,7 +32,8 @@ export async function GET(request: Request) {
   let connection = null;
   let storageError: string | null = null;
   try {
-    connection = endUserId ? await getConnection(endUserId, purpose) : null;
+    connection =
+      user?.role === "admin" ? await getAdminConnection(user, purpose) : null;
   } catch (error) {
     storageError = (error as Error).message;
   }
@@ -59,7 +60,8 @@ export async function PUT(request: Request) {
     return NextResponse.json({ error: "Unknown purpose" }, { status: 400 });
   }
 
-  const endUserId = await requireEndUserId();
+  const admin = await requireAdmin();
+  const existing = await getAdminConnection(admin, purpose);
   const { spreadsheetId, spreadsheetLabel, sheetId, sheetLabel } =
     await request.json();
 
@@ -83,7 +85,14 @@ export async function PUT(request: Request) {
     );
   }
 
-  const updated = await patchConnection(endUserId, purpose, {
+  if (!existing) {
+    return NextResponse.json(
+      { error: "Google Sheets is not connected yet." },
+      { status: 409 },
+    );
+  }
+
+  const updated = await patchConnection(existing.endUserId, purpose, {
     spreadsheetId,
     spreadsheetLabel: String(spreadsheetLabel ?? spreadsheetId),
     sheetId,
@@ -118,9 +127,10 @@ export async function DELETE(request: Request) {
   }
 
   try {
-    const endUserId = await requireEndUserId();
-    const connection = await getConnection(endUserId, purpose);
+    const admin = await requireAdmin();
+    const connection = await getAdminConnection(admin, purpose);
     if (!connection) return NextResponse.json({ connected: false });
+    const endUserId = connection.endUserId;
 
     // A trigger subscription is a flow of its own and has to be stopped too.
     if (connection.subscriptionId) {
@@ -138,6 +148,10 @@ export async function DELETE(request: Request) {
 
     return NextResponse.json({ connected: false });
   } catch (error) {
+    const denied = authErrorResponse(error);
+    if (denied) {
+      return NextResponse.json({ error: denied.error }, { status: denied.status });
+    }
     if (error instanceof ViasocketNotConfiguredError) {
       return NextResponse.json({ error: error.message }, { status: 503 });
     }

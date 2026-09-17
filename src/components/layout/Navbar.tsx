@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { ChevronDown, Heart, Menu, Search, ShoppingBag, X } from "lucide-react";
 import { MobileMenu } from "./MobileMenu";
+import { AccountMenu, type NavUser } from "./AccountMenu";
 import { SearchBar } from "@/components/ui/SearchBar";
 import { useCart } from "@/hooks/use-cart";
 import { useWishlist } from "@/hooks/use-wishlist";
@@ -24,7 +25,13 @@ function CountBadge({ count }: { count: number }) {
 const ICON_BUTTON =
   "relative flex h-10 w-10 items-center justify-center rounded-md text-foreground transition-colors hover:bg-muted";
 
-export function Navbar({ categories }: { categories: Category[] }) {
+export function Navbar({
+  categories,
+  user,
+}: {
+  categories: Category[];
+  user: NavUser | null;
+}) {
   const pathname = usePathname();
   const router = useRouter();
   const { totals, hydrated: cartReady } = useCart();
@@ -191,6 +198,10 @@ export function Navbar({ categories }: { categories: Category[] }) {
               <CountBadge count={cartCount} />
             </Link>
 
+            <span className="ml-1 hidden lg:block">
+              <AccountMenu user={user} />
+            </span>
+
             <button
               type="button"
               onClick={() => setMenuOpen(true)}
@@ -224,6 +235,7 @@ export function Navbar({ categories }: { categories: Category[] }) {
         cartCount={cartCount}
         wishlistCount={wishCount}
         categories={categories}
+        user={user}
       />
     </header>
   );

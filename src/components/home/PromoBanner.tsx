@@ -1,6 +1,6 @@
 import Image from "next/image";
 import { ButtonLink } from "@/components/ui/Button";
-import { img } from "@/data/images";
+import { img } from "@/lib/images";
 
 const PROMO_IMAGE = img("photo-1483985988355-763728e1935b", 1200, 800);
 

@@ -16,15 +16,11 @@ import {
 
 type Params = Promise<{ id: string }>;
 
-/**
- * Product pages render on demand rather than at build time: the catalogue lives
- * in the database and changes whenever a sheet is imported, so prerendering a
- * fixed list would go stale and would make the build depend on the database
- * being reachable.
+/*
+ * No `generateStaticParams`: the catalogue lives in the database and changes
+ * whenever a sheet is imported, and the header renders the signed-in account,
+ * so every product page is rendered per request.
  */
-export function generateStaticParams() {
-  return [];
-}
 
 export async function generateMetadata({
   params,

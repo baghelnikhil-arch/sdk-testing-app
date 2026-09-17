@@ -9,7 +9,13 @@ const SOCIALS = [
   { label: "Twitter", href: "https://twitter.com", icon: Twitter },
 ];
 
-export function Footer({ categories }: { categories: Category[] }) {
+export function Footer({
+  categories,
+  isAdmin = false,
+}: {
+  categories: Category[];
+  isAdmin?: boolean;
+}) {
   const sections = [
     {
       title: "Shop",
@@ -18,7 +24,18 @@ export function Footer({ categories }: { categories: Category[] }) {
         label: category.name,
       })),
     },
-    ...FOOTER_SECTIONS.filter((section) => section.title !== "Shop"),
+    ...FOOTER_SECTIONS.filter((section) => section.title !== "Shop").map(
+      (section) =>
+        section.title === "Company"
+          ? {
+              ...section,
+              // Only the people who can use it should be sent there.
+              links: section.links.filter(
+                (link) => isAdmin || link.href !== "/settings/integrations",
+              ),
+            }
+          : section,
+    ),
   ];
 
   return (

@@ -21,7 +21,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await syncCatalogue(match.endUserId);
+    const result = await syncCatalogue(match.connection);
     return NextResponse.json({ ok: true, imported: result.imported });
   } catch (error) {
     // Returning 200 would tell viaSocket the delivery succeeded.

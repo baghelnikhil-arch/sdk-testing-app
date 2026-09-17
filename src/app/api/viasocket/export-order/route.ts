@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { requireEndUserId } from "@/lib/end-user";
-import { getConnection, patchConnection } from "@/lib/integration-store";
+import { requireUser, authErrorResponse } from "@/lib/auth";
+import { getShopConnection, patchConnection } from "@/lib/integration-store";
 import {
   ADD_ROWS_ACTION,
   FIELD_SHEET,
@@ -9,6 +9,8 @@ import {
   runAction,
 } from "@/lib/viasocket";
 import { buildOrderRows, newOrderId, rebuildOrder } from "@/lib/order-export";
+import { markOrderExported, recordOrder } from "@/lib/order-store";
+import { clearCart } from "@/lib/cart-store";
 
 /**
  * Appends the order to the user's chosen Google Sheet, one row per line.
@@ -18,17 +20,18 @@ import { buildOrderRows, newOrderId, rebuildOrder } from "@/lib/order-export";
  * up, so the cart works exactly as before for anyone who has not connected.
  */
 export async function POST(request: Request) {
-  const endUserId = await requireEndUserId();
-  const integration = await getConnection(endUserId, "orders");
-
-  if (!integration?.spreadsheetId || !integration?.sheetId) {
-    return NextResponse.json({
-      exported: false,
-      reason: "not-configured",
-    });
+  let user;
+  try {
+    user = await requireUser();
+  } catch (error) {
+    const denied = authErrorResponse(error);
+    return NextResponse.json(
+      { error: denied?.error ?? "Not signed in." },
+      { status: denied?.status ?? 401 },
+    );
   }
 
-  const { items, customer } = await request.json();
+  const { items } = await request.json();
   if (!Array.isArray(items) || items.length === 0) {
     return NextResponse.json({ error: "The cart is empty." }, { status: 400 });
   }
@@ -42,12 +45,38 @@ export async function POST(request: Request) {
     );
   }
 
-  const orderId = newOrderId();
+  const reference = newOrderId();
+
+  /*
+   * The order is recorded first and the spreadsheet export attempted second.
+   * The order is the fact; the export is a copy of it. If Google is down the
+   * customer has still placed an order, and the failure is stored on the row
+   * rather than losing the sale.
+   */
+  const order = await recordOrder({
+    userId: user.id,
+    reference,
+    lines,
+    totals,
+  });
+  await clearCart(user.id);
+
+  // The shop exports through its own connection; customers have none.
+  const integration = await getShopConnection("orders");
+  if (!integration?.spreadsheetId || !integration?.sheetId) {
+    return NextResponse.json({
+      ordered: true,
+      orderId: reference,
+      exported: false,
+      reason: "not-configured",
+    });
+  }
+
   const rows = buildOrderRows({
     lines,
     totals,
-    orderId,
-    customer: typeof customer === "string" && customer ? customer : undefined,
+    orderId: reference,
+    customer: `${user.name} <${user.email}>`,
   });
 
   try {
@@ -58,24 +87,34 @@ export async function POST(request: Request) {
       rows_json: JSON.stringify(rows),
     });
 
-    await patchConnection(endUserId, "orders", {
+    await patchConnection(integration.endUserId, "orders", {
       lastExportAt: new Date().toISOString(),
     });
+    await markOrderExported(order.id, true);
 
     return NextResponse.json({
+      ordered: true,
       exported: true,
-      orderId,
+      orderId: reference,
       rows: rows.length,
       sheetLabel: integration.sheetLabel ?? null,
     });
   } catch (error) {
+    const denied = authErrorResponse(error);
+    if (denied) {
+      return NextResponse.json({ error: denied.error }, { status: denied.status });
+    }
     if (error instanceof ViasocketNotConfiguredError) {
       return NextResponse.json({ error: error.message }, { status: 503 });
     }
-    // The order still "succeeded" for the shopper; only the export failed.
-    return NextResponse.json(
-      { exported: false, reason: "action-failed", error: (error as Error).message },
-      { status: 502 },
-    );
+    // The order still succeeded for the shopper; only the export failed.
+    await markOrderExported(order.id, false, (error as Error).message);
+    return NextResponse.json({
+      ordered: true,
+      orderId: reference,
+      exported: false,
+      reason: "action-failed",
+      error: (error as Error).message,
+    });
   }
 }

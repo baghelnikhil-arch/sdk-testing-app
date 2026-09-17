@@ -1,8 +1,8 @@
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@prisma/client";
-import { products } from "../src/data/products";
-import { categories } from "../src/data/categories";
-import { getReviewsForProduct } from "../src/data/reviews";
+import { products } from "./seed-data/products";
+import { categories } from "./seed-data/categories";
+import { getReviewsForProduct } from "./seed-data/reviews";
 
 /**
  * Loads the repository's starting data into the database.

@@ -19,6 +19,8 @@ export type Purpose = "orders" | "catalogue";
 export const PURPOSES: Purpose[] = ["orders", "catalogue"];
 
 export type Connection = {
+  /** viaSocket's `unique_identifier` for whoever owns this connection. */
+  endUserId: string;
   authId: string;
   scriptId: string;
   spreadsheetId?: string;
@@ -34,6 +36,7 @@ export type Connection = {
 };
 
 type Row = {
+  endUserId: string;
   authId: string;
   scriptId: string;
   spreadsheetId: string | null;
@@ -51,6 +54,7 @@ type Row = {
 /** Nulls are a database detail; the rest of the app works in optionals. */
 function toConnection(row: Row): Connection {
   return {
+    endUserId: row.endUserId,
     authId: row.authId,
     scriptId: row.scriptId,
     spreadsheetId: row.spreadsheetId ?? undefined,
@@ -78,7 +82,7 @@ function toColumns(patch: Partial<Connection>) {
   const data: Record<string, unknown> = {};
 
   for (const [key, value] of Object.entries(patch)) {
-    if (key === "connectedAt") continue;
+    if (key === "connectedAt" || key === "endUserId") continue;
     if ((DATE_FIELDS as readonly string[]).includes(key)) {
       data[key] = value ? new Date(value as string) : null;
       continue;
@@ -172,6 +176,64 @@ export async function findByWebhookToken(
   if (!row || row.purpose !== "catalogue") return null;
 
   return { endUserId: row.endUserId, connection: toConnection(row) };
+}
+
+/**
+ * The connection an administrator manages for a purpose.
+ *
+ * Ownership is the app's own `userId`, which is not the same as viaSocket's
+ * `endUserId`: a connection made before accounts existed keeps its original
+ * viaSocket identity forever — changing it would make viaSocket treat it as
+ * somebody else's — and gains an owner when an administrator adopts it. So the
+ * owner is tried first, and the caller's own viaSocket identity second, which is
+ * what a connection they made themselves will match.
+ */
+export async function getAdminConnection(
+  user: { id: string; viasocketId: string },
+  purpose: Purpose,
+): Promise<Connection | null> {
+  /*
+   * Adopting older connections can leave an administrator owning more than one
+   * for a purpose — a half-finished attempt next to the real thing. A configured
+   * sheet is what makes one usable, so those win; only if none is configured
+   * does the most recent unconfigured one stand in, so the settings screen can
+   * still offer to finish it.
+   */
+  const configured = await db().connection.findFirst({
+    where: {
+      userId: user.id,
+      purpose,
+      spreadsheetId: { not: null },
+      sheetId: { not: null },
+    },
+    orderBy: { updatedAt: "desc" },
+  });
+  if (configured) return toConnection(configured);
+
+  const owned = await db().connection.findFirst({
+    where: { userId: user.id, purpose },
+    orderBy: { updatedAt: "desc" },
+  });
+  if (owned) return toConnection(owned);
+
+  return getConnection(user.viasocketId, purpose);
+}
+
+/**
+ * The connection the shop itself uses for a purpose.
+ *
+ * There is one storefront, so an order placed by any customer is exported
+ * through the administrator's connection — not the shopper's, who has none.
+ * Claimed connections win over unclaimed leftovers from before accounts existed.
+ */
+export async function getShopConnection(
+  purpose: Purpose,
+): Promise<Connection | null> {
+  const row = await db().connection.findFirst({
+    where: { purpose, spreadsheetId: { not: null }, sheetId: { not: null } },
+    orderBy: [{ userId: "desc" }, { updatedAt: "desc" }],
+  });
+  return row ? toConnection(row) : null;
 }
 
 /**

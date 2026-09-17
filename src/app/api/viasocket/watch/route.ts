@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { NextResponse } from "next/server";
-import { requireEndUserId } from "@/lib/end-user";
-import { getConnection, patchConnection } from "@/lib/integration-store";
+import { authErrorResponse, requireAdmin } from "@/lib/auth";
+import { getAdminConnection, patchConnection } from "@/lib/integration-store";
 import {
   FIELDS,
   ROW_ADDED_TRIGGER,
@@ -70,8 +70,8 @@ function resolvePublicBaseUrl(): { origin: string } | { error: string } {
 
 export async function POST() {
   try {
-    const endUserId = await requireEndUserId();
-    const connection = await getConnection(endUserId, "catalogue");
+    const admin = await requireAdmin();
+    const connection = await getAdminConnection(admin, "catalogue");
 
     if (!connection?.spreadsheetId || !connection?.sheetId) {
       return NextResponse.json(
@@ -93,7 +93,7 @@ export async function POST() {
     const webhook = `${base.origin}/api/viasocket/catalogue-webhook?token=${webhookToken}`;
 
     const subscriptionId = await subscribeEvent(
-      endUserId,
+      connection.endUserId,
       ROW_ADDED_TRIGGER,
       connection.authId,
       {
@@ -103,19 +103,23 @@ export async function POST() {
         column_key: true,
       },
       webhook,
-      { purpose: "catalogue", user: endUserId },
+      { purpose: "catalogue", user: connection.endUserId },
     );
 
     // The subscription script_id is the only handle to it — the flows listing
     // cannot tell a subscription from an enabled app — so it is stored before
     // anything else can fail.
-    await patchConnection(endUserId, "catalogue", {
+    await patchConnection(connection.endUserId, "catalogue", {
       subscriptionId,
       webhookToken,
     });
 
     return NextResponse.json({ watching: true });
   } catch (error) {
+    const denied = authErrorResponse(error);
+    if (denied) {
+      return NextResponse.json({ error: denied.error }, { status: denied.status });
+    }
     if (error instanceof ViasocketNotConfiguredError) {
       return NextResponse.json({ error: error.message }, { status: 503 });
     }
@@ -125,19 +129,25 @@ export async function POST() {
 
 export async function DELETE() {
   try {
-    const endUserId = await requireEndUserId();
-    const connection = await getConnection(endUserId, "catalogue");
+    const admin = await requireAdmin();
+    const connection = await getAdminConnection(admin, "catalogue");
 
     if (connection?.subscriptionId) {
-      await setFlowStatus(endUserId, connection.subscriptionId, 0);
+      await setFlowStatus(connection.endUserId, connection.subscriptionId, 0);
     }
-    await patchConnection(endUserId, "catalogue", {
-      subscriptionId: undefined,
-      webhookToken: undefined,
-    });
+    if (connection) {
+      await patchConnection(connection.endUserId, "catalogue", {
+        subscriptionId: undefined,
+        webhookToken: undefined,
+      });
+    }
 
     return NextResponse.json({ watching: false });
   } catch (error) {
+    const denied = authErrorResponse(error);
+    if (denied) {
+      return NextResponse.json({ error: denied.error }, { status: denied.status });
+    }
     return NextResponse.json({ error: (error as Error).message }, { status: 502 });
   }
 }

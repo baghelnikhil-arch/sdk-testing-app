@@ -1,15 +1,17 @@
 import type { Product } from "@/types";
-import { img } from "./images";
+import { img } from "../../src/lib/images";
 
 const APPAREL_SIZES = ["XS", "S", "M", "L", "XL"];
 const SHOE_SIZES = ["7", "8", "9", "10", "11", "12"];
 const ONE_SIZE = ["One Size"];
 
 /**
- * The full catalogue.
+ * The starting catalogue.
  *
- * Adding a product is intentionally boring: append an object here and it shows
- * up in search, filters, category pages and its own detail route automatically.
+ * This is seed material, not runtime data — the shop reads products from
+ * Postgres. Appending here changes nothing until `npm run db:seed` runs, and
+ * seeding only replaces rows marked `source: "seed"`, so an operator's imported
+ * products are never touched.
  */
 export const products: Product[] = [
   {
@@ -1377,11 +1379,3 @@ export const products: Product[] = [
   },
 ];
 
-export const productById = new Map(products.map((p) => [p.id, p]));
-export const productBySlug = new Map(products.map((p) => [p.slug, p]));
-
-/** Bounds used to seed the price filter, derived rather than hard-coded. */
-export const PRICE_BOUNDS = {
-  min: 0,
-  max: Math.ceil(Math.max(...products.map((p) => p.price)) / 50) * 50,
-};

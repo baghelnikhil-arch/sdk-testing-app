@@ -1,7 +1,7 @@
 import Image from "next/image";
 import { Star } from "lucide-react";
 import { ButtonLink } from "@/components/ui/Button";
-import { img } from "@/data/images";
+import { img } from "@/lib/images";
 
 const HERO_IMAGE = img("photo-1517445312882-bc9910d016b7", 1000, 1250);
 

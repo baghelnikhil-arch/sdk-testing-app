@@ -1,15 +1,29 @@
 import { NextResponse } from "next/server";
-import { requireEndUserId } from "@/lib/end-user";
+import { authErrorResponse, requireAdmin } from "@/lib/auth";
+import { getAdminConnection } from "@/lib/integration-store";
 import { syncCatalogue } from "@/lib/sync-catalogue";
 import { ViasocketNotConfiguredError } from "@/lib/viasocket";
 
-/** Manual "Sync now" — also the backfill, since the trigger only sees new rows. */
+/** Manual "Import now" — also the backfill, since the trigger only sees new rows. */
 export async function POST() {
   try {
-    const endUserId = await requireEndUserId();
-    const result = await syncCatalogue(endUserId);
+    const admin = await requireAdmin();
+    const connection = await getAdminConnection(admin, "catalogue");
+
+    if (!connection) {
+      return NextResponse.json(
+        { error: "Google Sheets is not connected yet." },
+        { status: 409 },
+      );
+    }
+
+    const result = await syncCatalogue(connection);
     return NextResponse.json({ ok: true, ...result });
   } catch (error) {
+    const denied = authErrorResponse(error);
+    if (denied) {
+      return NextResponse.json({ error: denied.error }, { status: denied.status });
+    }
     if (error instanceof ViasocketNotConfiguredError) {
       return NextResponse.json({ error: error.message }, { status: 503 });
     }

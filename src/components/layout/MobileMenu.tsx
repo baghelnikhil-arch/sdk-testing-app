@@ -4,7 +4,9 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Heart, ShoppingBag, X } from "lucide-react";
+import { Heart, LogOut, Package, Settings, ShoppingBag, X } from "lucide-react";
+import { logout } from "@/app/actions/auth";
+import type { NavUser } from "./AccountMenu";
 import { NAV_LINKS, SITE } from "@/lib/constants";
 import type { Category } from "@/types";
 import { cn } from "@/lib/utils";
@@ -15,12 +17,14 @@ export function MobileMenu({
   cartCount,
   wishlistCount,
   categories,
+  user,
 }: {
   open: boolean;
   onClose: () => void;
   cartCount: number;
   wishlistCount: number;
   categories: Category[];
+  user: NavUser | null;
 }) {
   const pathname = usePathname();
   const panelRef = useRef<HTMLDivElement>(null);
@@ -123,6 +127,62 @@ export function MobileMenu({
                 </Link>
               </li>
             ))}
+          </ul>
+
+          <p className="mt-7 mb-2 px-3 text-xs font-semibold tracking-[0.16em] text-muted-foreground uppercase">
+            Account
+          </p>
+          <ul className="flex flex-col gap-1">
+            {user ? (
+              <>
+                <li>
+                  <Link href="/account" onClick={onClose} className={linkClass("/account")}>
+                    <span className="flex items-center gap-2.5">
+                      <Package className="h-4 w-4" aria-hidden="true" />
+                      Your orders
+                    </span>
+                  </Link>
+                </li>
+                {user.role === "admin" && (
+                  <li>
+                    <Link
+                      href="/settings/integrations"
+                      onClick={onClose}
+                      className={linkClass("/settings/integrations")}
+                    >
+                      <span className="flex items-center gap-2.5">
+                        <Settings className="h-4 w-4" aria-hidden="true" />
+                        Integrations
+                      </span>
+                    </Link>
+                  </li>
+                )}
+                <li>
+                  <form action={logout}>
+                    <button
+                      type="submit"
+                      className="flex w-full items-center gap-2.5 rounded-md px-3 py-3 text-base font-medium text-foreground transition-colors hover:bg-muted hover:text-sale"
+                    >
+                      <LogOut className="h-4 w-4" aria-hidden="true" />
+                      Sign out
+                    </button>
+                  </form>
+                </li>
+              </>
+            ) : (
+              <>
+                <li>
+                  <Link href="/login" onClick={onClose} className={linkClass("/login")}>
+                    Sign in
+                  </Link>
+                </li>
+                <li>
+                  <Link href="/signup" onClick={onClose} className={linkClass("/signup")}>
+                    Create account
+                  </Link>
+                </li>
+              </>
+            )}
           </ul>
         </nav>
 

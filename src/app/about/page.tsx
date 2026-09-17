@@ -4,7 +4,7 @@ import { Leaf, Ruler, Sparkles, Users } from "lucide-react";
 import { ButtonLink } from "@/components/ui/Button";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { SectionHeading } from "@/components/ui/SectionHeading";
-import { img } from "@/data/images";
+import { img } from "@/lib/images";
 import { SITE } from "@/lib/constants";
 
 export const metadata: Metadata = {

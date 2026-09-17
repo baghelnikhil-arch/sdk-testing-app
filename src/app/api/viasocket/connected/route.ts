@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { requireEndUserId } from "@/lib/end-user";
+import { authErrorResponse } from "@/lib/auth";
+import { requireAdminEndUserId } from "@/lib/end-user";
 import { getConnection, saveConnection } from "@/lib/integration-store";
 import { parsePurpose } from "@/lib/purpose";
 import {
@@ -20,7 +21,7 @@ import {
  */
 export async function POST(request: Request) {
   try {
-    const endUserId = await requireEndUserId();
+    const endUserId = await requireAdminEndUserId();
     const body = await request.json();
     const purpose = parsePurpose(body.purpose);
 
@@ -67,6 +68,10 @@ export async function POST(request: Request) {
       sheetLabel: record.sheetLabel ?? null,
     });
   } catch (error) {
+    const denied = authErrorResponse(error);
+    if (denied) {
+      return NextResponse.json({ error: denied.error }, { status: denied.status });
+    }
     if (error instanceof ViasocketNotConfiguredError) {
       return NextResponse.json({ error: error.message }, { status: 503 });
     }

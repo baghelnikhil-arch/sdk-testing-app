@@ -1,15 +1,19 @@
 # Aurelle — e-commerce demo storefront
 
-A complete, responsive storefront built with Next.js (App Router), TypeScript and
-Tailwind CSS. It runs entirely on local mock data: no backend, no auth, no
-payments. The point is to be **simple enough to read, polished enough to show,
-and structured enough to extend.**
+A complete, responsive storefront built with Next.js 16 (App Router), TypeScript,
+Tailwind CSS and Postgres. It has accounts, a database-backed catalogue and two
+Google Sheets integrations. There is no payment provider: checkout records a real
+order but charges nothing.
 
 ```bash
 npm install
-npm run dev     # http://localhost:3000
-npm run build   # production build + type check
+cp .env.example .env.local   # then fill in DATABASE_URL at minimum
+npm run db:push              # create the tables
+npm run db:seed              # load the starting catalogue
+npm run dev                  # http://localhost:3000
 ```
+
+The first account you create becomes the shop administrator.
 
 ---
 
@@ -17,17 +21,23 @@ npm run build   # production build + type check
 
 | Route               | Rendering | Notes                                         |
 | ------------------- | --------- | --------------------------------------------- |
-| `/`                 | Static    | Hero, categories, featured, promo, new arrivals, benefits, newsletter |
+| `/`                 | Dynamic   | Hero, categories, featured, promo, new arrivals, benefits, newsletter |
 | `/shop`             | Dynamic   | Reads `?q=` and `?sale=` from the URL         |
-| `/shop/[category]`  | Dynamic   | Prerendered params for all four categories    |
-| `/product/[id]`     | SSG       | One page per product via `generateStaticParams` |
-| `/cart`             | Static    | Client-rendered contents (localStorage)       |
-| `/wishlist`         | Static    | Client-rendered contents (localStorage)       |
-| `/about`            | Static    |                                               |
-| `/contact`          | Static    | Simulated submit, no network call             |
-| `/settings/integrations` | Static | Both connections: catalogue source and order destination |
+| `/shop/[category]`  | Dynamic   | One page per category, from the database      |
+| `/product/[id]`     | Dynamic   | Rendered per request; the catalogue can change at any time |
+| `/cart`             | Dynamic   | Account cart when signed in, browser cart otherwise |
+| `/wishlist`         | Dynamic   | Same                                          |
+| `/about`            | Dynamic   |                                               |
+| `/contact`          | Dynamic   | Simulated submit, no network call             |
+| `/login`, `/signup` | Dynamic | Sign in and register |
+| `/account`          | Dynamic | Your orders; signed-in only |
+| `/settings/integrations` | Dynamic | Both connections; **administrators only** |
 | `/api/viasocket/*`  | Dynamic   | Server-only bridge to viaSocket (see below)   |
-| `not-found`         | Static    | Custom 404                                    |
+| `not-found`         | Dynamic   | Custom 404                                    |
+
+Every route is server-rendered per request because the header shows who is signed
+in. `src/proxy.ts` redirects signed-out visitors away from `/account` and
+`/settings` before the page renders.
 
 ---
 
@@ -43,15 +53,28 @@ src/
 │   ├── cart/       Cart line, summary, view
 │   ├── home/       Hero, PromoBanner, Benefits
 │   ├── ui/         Button, Badge, Price, Rating, Breadcrumb, Pagination, EmptyState, …
-│   └── integrations/ GoogleSheetsCard (connect button + pickers)
-├── data/           products.ts, categories.ts, reviews.ts  ← seed for `db:seed`, not runtime
-├── hooks/          use-cart, use-wishlist (Context + reducer, persisted)
+│   ├── integrations/ SheetsConnectionCard, ProductSheetCard (connect + pickers)
+│   └── auth/       AuthForm (sign in and sign up)
+
+├── hooks/          use-session, use-catalogue, use-cart, use-wishlist
 ├── lib/            shop-data.ts (all catalogue reads), queries.ts (pure list logic),
 │                   catalogue.ts (sheet → Product mapping), cart.ts (pricing),
 │                   viasocket.ts (server only), sync-catalogue.ts, order-export.ts,
-│                   db.ts + integration-store.ts (Prisma), end-user.ts
+│                   images.ts (placeholder photography for the marketing pages),
+│                   auth.ts, cart-store.ts, order-store.ts, db.ts,
+│                   integration-store.ts (Prisma), end-user.ts
+├── proxy.ts        Optimistic route protection (Next 16's renamed middleware)
 └── types/          Domain types
+
+prisma/
+├── schema.prisma   The tables
+├── seed.ts         Loads seed-data into the database
+├── seed-data/      products.ts, categories.ts, reviews.ts — starting content only
+└── create-admin.ts Creates or promotes an administrator
 ```
+
+Nothing under `prisma/` is imported by the running app. The shop reads everything
+from Postgres; those files exist so a fresh database has something in it.
 
 ## The four seams that make this extensible
 
@@ -67,21 +90,26 @@ rewriting the UI.
    computed in `computeTotals`, not scattered through components. A real
    promotions or tax service replaces that one function.
 
-3. **`src/app/providers.tsx` is the client-state mount point.** Auth, toasts or a
-   query client wrap here. The layout never changes.
+3. **`src/app/providers.tsx` is the client-state mount point.** The session,
+   catalogue, cart and wishlist providers are mounted here, in that order — each
+   one reads the one above it. A toast system or query client wraps here too.
 
 4. **`src/types/index.ts` describes shape, not source.** As long as an API
    returns `Product`, everything downstream keeps working.
 
-Adding auth, orders, an admin dashboard, coupons or real reviews should slot into
-these seams. None of them are implemented — deliberately.
+Accounts, orders and the Sheets integrations were all added through these seams
+rather than around them. Coupons, payments or an admin dashboard would go the
+same way.
 
 ### Adding a product
 
-Append an object to `products` in `src/data/products.ts`. It appears in search,
-filters, sorting, its category page and its own detail route automatically.
-Images go through the `img()` helper in `src/data/images.ts`, so pointing at a
-real CDN is a one-line change.
+Three ways, in increasing order of realism: append to
+`prisma/seed-data/products.ts` and run `npm run db:seed`; insert a row in the
+`Product` table; or add a row to the connected Google Sheet and press **Import
+now**.
+
+Seeding only replaces rows marked `source: "seed"`, so it never destroys products
+imported from a spreadsheet.
 
 ---
 
@@ -118,10 +146,11 @@ Layouts are chosen per breakpoint, not shrunk:
 
 ## State
 
-Cart and wishlist are React Context over a reducer, persisted to `localStorage`
-and hydrated after mount (`hydrated` flag) so server and client markup match.
-Cart lines are keyed by product **plus** size and colour, so the same shirt in
-two sizes is two lines. No Redux — there is nothing here that needs it.
+Cart and wishlist are React Context over a reducer. Where they persist depends on
+who is holding them: Postgres for a signed-in account, `localStorage` for a
+visitor. Either way nothing renders until `hydrated` flips, so server and client
+markup always match. Cart lines are keyed by product **plus** size and colour, so
+the same shirt in two sizes is two lines. No Redux — nothing here needs it.
 
 ## What was verified
 
@@ -277,7 +306,10 @@ Everything the app reads or writes lives in Postgres, through Prisma:
 | `Product` | The whole catalogue. `source` is `"seed"` (shipped with the repo) or `"sheet"` (imported from a spreadsheet) — an import replaces only the latter. |
 | `Category` | The four edits the shop is organised by. |
 | `Review` | Product reviews, cascading with their product. |
-| `Connection` | One row per (end user, purpose): viaSocket ids and the chosen sheet. |
+| `Connection` | One row per (viaSocket identity, purpose): the connection and its sheet, plus the account that owns it. |
+| `User` / `Session` | Accounts and server-side sessions. |
+| `CartItem` / `WishlistItem` | Per user, so they follow the account across devices. |
+| `Order` / `OrderItem` | Placed orders, with prices copied in so history cannot be rewritten by a catalogue change. |
 
 ```bash
 npm run db:push     # apply prisma/schema.prisma
@@ -312,6 +344,67 @@ client-side cart.
 Every read is wrapped so an unreachable database degrades instead of erroring —
 the storefront falls back to an empty catalogue rather than a stack trace.
 
+## Accounts
+
+One shop, many shoppers. Browsing is public; anything that belongs to a person
+needs an account.
+
+| | Signed out | Customer | Admin |
+| --- | --- | --- | --- |
+| Browse, search, product pages | ✅ | ✅ | ✅ |
+| Cart & wishlist | in this browser | saved to the account | saved to the account |
+| Checkout & order history | — | ✅ | ✅ |
+| Google Sheets integrations | — | — | ✅ |
+
+**The first account created is the administrator**, and any address in
+`ADMIN_EMAILS` is too — otherwise a fresh database would have no way to reach the
+integration settings.
+
+Once the shop is live and everyone who registered is a customer, that rule is no
+help. This is the way back in:
+
+```bash
+npm run db:create-admin -- you@example.com "Your Name" [password]
+```
+
+It creates the account, or promotes an existing one, prints the password once if
+you did not supply it, and adopts any Google Sheets connection left without an
+owner. Safe to re-run.
+
+### How it works
+
+- **Passwords** use `scrypt` from Node's standard library — no dependency, and
+  deliberately slow. Stored as `salt:hash`, compared with `timingSafeEqual`.
+- **Sessions are stored, not signed.** The browser holds an opaque random token;
+  every check looks it up. That costs a query and buys real revocation — signing
+  out invalidates immediately, which a self-contained JWT cannot.
+- **Two layers of checking.** `src/proxy.ts` (Next 16 renamed `middleware.ts` to
+  `proxy.ts`) does the *optimistic* check: it only asks whether a session cookie
+  exists, because it runs on every request including prefetches and must not
+  touch the database. The *real* check is `getCurrentUser()` in
+  [`lib/auth.ts`](src/lib/auth.ts), which every page and route handler uses.
+  Nothing trusts the cookie alone.
+- **Per-user data is scoped in one place.** [`cart-store.ts`](src/lib/cart-store.ts)
+  and [`order-store.ts`](src/lib/order-store.ts) take a `userId` and filter every
+  query on it, and that id always comes from the session — never from the
+  request. There is no endpoint that accepts "whose cart".
+
+### Signed-out carts
+
+A visitor's cart lives in `localStorage`. On sign-in it is merged into the
+account — quantities add rather than overwrite — and the browser copy is then
+cleared, so signing out or signing in as somebody else on the same machine
+cannot resurrect the previous person's cart.
+
+### viaSocket identity vs account identity
+
+These are deliberately different. viaSocket's `unique_identifier` must never
+change for a given connection, so `Connection.endUserId` keeps whatever identity
+it was created with, while `Connection.userId` records which account manages it.
+New connections use the account's `viasocketId`, fixed at signup so changing an
+email cannot orphan them. Connections made before accounts existed are adopted by
+the first administrator to sign in.
+
 ## Deploying
 
 Set these in the host's environment variables — never in a committed file:
@@ -320,6 +413,7 @@ Set these in the host's environment variables — never in a committed file:
 DATABASE_URL=            # pooled Postgres URL
 DIRECT_URL=              # unpooled, for migrations
 VIASOCKET_EMBED_SECRET=  # from the viaSocket Install Code page
+ADMIN_EMAILS=            # optional, comma separated: these addresses sign up as admins
 ```
 
 A first deploy against an empty database needs `npm run db:push` and
