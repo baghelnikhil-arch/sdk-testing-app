@@ -111,7 +111,20 @@ export async function POST() {
       {
         [FIELDS.rowTrigger.spreadsheet]: connection.spreadsheetId,
         [FIELDS.rowTrigger.sheet]: connection.sheetId,
-        record_type: "new",
+        /*
+         * `record_type` is deliberately not sent.
+         *
+         * It was set to "new", which sounds like "a product was added" and is
+         * not: it means a row appended past the end of the sheet. A spreadsheet
+         * that has ever been scrolled has blank rows already sitting there, so
+         * typing a product into one is an *update* to an existing row and the
+         * trigger stayed silent — while reporting itself perfectly healthy.
+         * Every row typed by hand was ignored; every row appended through the
+         * API arrived within seconds, which is what made this look like a
+         * failing subscription for so long. Omitting the field lets the trigger
+         * do what its name says, "Row Added Or Updated". viaSocket publishes no
+         * option list for it, so this was established by experiment.
+         */
         column_key: true,
       },
       webhook,
