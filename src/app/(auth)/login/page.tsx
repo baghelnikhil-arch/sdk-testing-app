@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
 import { AuthForm } from "@/components/auth/AuthForm";
 import { login } from "@/app/actions/auth";
 import { SITE } from "@/lib/constants";
+import { getCurrentUser } from "@/lib/auth";
 
 export const metadata: Metadata = { title: "Sign in" };
 
@@ -11,6 +13,13 @@ export default async function LoginPage({
   searchParams: Promise<{ next?: string }>;
 }) {
   const { next = "/" } = await searchParams;
+
+  /*
+   * Checked here rather than in the proxy, which can only see that a cookie
+   * exists. A cookie whose session has expired or been revoked would otherwise
+   * bounce its owner away from the one page that lets them sign in again.
+   */
+  if (await getCurrentUser()) redirect(next);
 
   return (
     <div className="container-page flex justify-center py-16 md:py-24">

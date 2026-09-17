@@ -17,9 +17,6 @@ const SESSION_COOKIE = "aurelle_session";
 /** Signed-in only. Browsing the shop stays open to everyone. */
 const PROTECTED = ["/account", "/admin", "/settings"];
 
-/** Pointless once signed in. */
-const AUTH_ROUTES = ["/login", "/signup"];
-
 export function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
   const hasSession = Boolean(request.cookies.get(SESSION_COOKIE)?.value);
@@ -31,10 +28,14 @@ export function proxy(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  if (hasSession && AUTH_ROUTES.some((route) => pathname.startsWith(route))) {
-    return NextResponse.redirect(new URL("/", request.nextUrl));
-  }
-
+  /*
+   * Sending an already-signed-in visitor away from /login is deliberately NOT
+   * done here. A cookie proves nothing — the session behind it may have expired,
+   * been signed out elsewhere, or been revoked — and redirecting on the cookie
+   * alone locks such a person out of the only page that could fix it: the header
+   * offers them "Sign in", the proxy bounces them home, and nothing they click
+   * does anything. The login page makes that call against the database instead.
+   */
   return NextResponse.next();
 }
 
