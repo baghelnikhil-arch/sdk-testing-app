@@ -8,7 +8,7 @@ import { ViasocketNotConfiguredError } from "@/lib/viasocket";
 export async function POST() {
   try {
     const admin = await requireAdmin();
-    const connection = await getConnection(admin.id, "catalogue");
+    const connection = await getConnection(admin.id);
 
     if (!connection) {
       return NextResponse.json(

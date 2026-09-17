@@ -1,8 +1,8 @@
 import { revalidatePath } from "next/cache";
 import {
   claimSync,
-  findSheetConflict,
   getShopConnection,
+  sheetTakenBy,
   patchConnection,
   type Connection,
 } from "./integration-store";
@@ -40,7 +40,7 @@ export async function autoSyncIfDue(): Promise<void> {
   let connection: Connection | null = null;
 
   try {
-    connection = await getShopConnection("catalogue");
+    connection = await getShopConnection();
   } catch {
     return; // No database, no schedule.
   }
@@ -52,7 +52,7 @@ export async function autoSyncIfDue(): Promise<void> {
   if (Date.now() - last < minutes * 60_000) return;
 
   // Only the request that wins the claim does the work.
-  if (!(await claimSync(connection.userId, "catalogue", connection.lastSyncAt))) {
+  if (!(await claimSync(connection.userId, connection.lastSyncAt))) {
     return;
   }
 
@@ -87,17 +87,18 @@ export async function syncCatalogue(
 
   /*
    * Checked here as well as when the sheet is chosen: a pairing saved before
-   * this rule existed would otherwise keep firing, and the webhook path never
-   * passes through the save screen at all.
+   * this rule existed would otherwise keep firing, and neither the webhook nor
+   * the scheduled re-read passes through the save screen at all.
    */
-  const conflict = await findSheetConflict(
-    "catalogue",
-    connection.spreadsheetId,
-    connection.sheetId,
-  );
-  if (conflict) {
+  if (
+    await sheetTakenBy(
+      connection.spreadsheetId,
+      connection.sheetId,
+      connection.userId,
+    )
+  ) {
     throw new Error(
-      `"${connection.spreadsheetLabel ?? "That sheet"}" is where this shop writes its orders. Reading products from the order log would replace your catalogue with order rows, so the import was stopped. Point the product catalogue at a different sheet.`,
+      `"${connection.spreadsheetLabel ?? "That sheet"}" is somebody's order log. Reading products from it would replace your catalogue with order rows, so the import was stopped. Point the catalogue at a sheet nothing else writes to.`,
     );
   }
 
@@ -157,7 +158,7 @@ export async function syncCatalogue(
     { prune },
   );
 
-  await patchConnection(connection.userId, "catalogue", {
+  await patchConnection(connection.userId, {
     lastSyncAt: new Date().toISOString(),
     lastSyncCount: kept.length,
   });

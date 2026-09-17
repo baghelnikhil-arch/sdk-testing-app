@@ -5,21 +5,16 @@ import { AlertCircle, Check, Loader2, Pencil, RefreshCw, Unplug } from "lucide-r
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { SheetsFields, ViasocketScript } from "./SheetsFields";
-import {
-  SHEETS_ICON,
-  useGoogleSheets,
-  type Purpose,
-} from "@/hooks/use-google-sheets";
+import { SHEETS_ICON, useGoogleSheets } from "@/hooks/use-google-sheets";
 
 type Sheets = ReturnType<typeof useGoogleSheets>;
 
 /**
  * One connection, rendered in full.
  *
- * Both purposes use this: order export and catalogue import each get their own
- * account, their own spreadsheet and their own disconnect button. The card takes
- * an already-constructed hook so the caller can also drive purpose-specific
- * controls from the same state.
+ * The admin page renders it around the catalogue controls. It takes an
+ * already-constructed hook so the caller can drive its own controls from the
+ * same state.
  */
 export function SheetsConnectionCard({
   sheets,
@@ -39,7 +34,7 @@ export function SheetsConnectionCard({
   /** Purpose-specific controls, shown once a sheet is chosen. */
   children?: React.ReactNode;
 }) {
-  const { status, error, busy, saved, editing, purpose } = sheets;
+  const { status, error, busy, saved, editing } = sheets;
   const connected = Boolean(status?.connected);
 
   return (
@@ -129,7 +124,7 @@ export function SheetsConnectionCard({
           {editing ? (
             <>
               <SheetsFields
-                idPrefix={`${purpose}-sheets`}
+                idPrefix="catalogue-sheets"
                 spreadsheets={sheets.spreadsheets}
                 sheets={sheets.sheets}
                 spreadsheetId={sheets.spreadsheetId}
@@ -228,5 +223,3 @@ export function SheetsConnectionCard({
     </section>
   );
 }
-
-export type { Purpose };

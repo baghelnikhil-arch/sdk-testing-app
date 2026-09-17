@@ -3,25 +3,18 @@ import { db } from "./db";
 /**
  * Integration state, in Postgres.
  *
- * Every connection belongs to an account, and `(userId, purpose)` is the only
- * way one is ever found. It used to be keyed on viaSocket's `endUserId`, which
- * is a different identifier owned by a different system: connections made in
- * two browsers landed under two identities, one account could end up holding
- * several rows for the same purpose, and deciding which of them was "the" one
- * took a fallback chain that nobody could predict. Now there is exactly one row
- * per account per purpose, and the database enforces it.
+ * One connection per account, found by `userId` and nothing else.
+ *
+ * There used to be a `purpose` column — "orders" or "catalogue" — and a row per
+ * pair, which meant the same person could hold two connections, two sheets and
+ * two subscriptions, and every route had to carry a purpose around to say which
+ * one it meant. What a connection is for is not a property of the connection at
+ * all: it follows from who owns it. An administrator's sheet is what the shop
+ * sells; anybody else's is where their own orders go.
  *
  * `scriptId` is a credential: anyone holding it can run Google Sheets as this
  * user. It stays server-side and is never returned to the browser.
  */
-
-/**
- * Exporting orders and importing the catalogue are separate connections:
- * different Google accounts, different spreadsheets, connected and disconnected
- * independently.
- */
-export type Purpose = "orders" | "catalogue";
-export const PURPOSES: Purpose[] = ["orders", "catalogue"];
 
 /** An account, as this module needs to see one. */
 export type Owner = { id: string; viasocketId: string };
@@ -108,34 +101,25 @@ function toColumns(patch: Partial<Connection>) {
   return data;
 }
 
-const key = (userId: string, purpose: Purpose) => ({
-  userId_purpose: { userId, purpose },
-});
-
-export async function getConnection(
-  userId: string,
-  purpose: Purpose,
-): Promise<Connection | null> {
-  const row = await db().connection.findUnique({ where: key(userId, purpose) });
+export async function getConnection(userId: string): Promise<Connection | null> {
+  const row = await db().connection.findUnique({ where: { userId } });
   return row ? toConnection(row) : null;
 }
 
 /** Creates the connection, or merges into it when one already exists. */
 export async function saveConnection(
   owner: Owner,
-  purpose: Purpose,
   patch: Partial<Connection> & Pick<Connection, "authId" | "scriptId">,
 ): Promise<Connection> {
   const columns = toColumns(patch);
 
   const row = await db().connection.upsert({
-    where: key(owner.id, purpose),
+    where: { userId: owner.id },
     // connectedAt defaults on insert and is never touched again, so it records
     // when this account was first linked rather than when it last changed.
     create: {
       userId: owner.id,
       endUserId: owner.viasocketId,
-      purpose,
       authId: patch.authId,
       scriptId: patch.scriptId,
       ...columns,
@@ -149,12 +133,11 @@ export async function saveConnection(
 /** Updates a connection that must already exist; returns null if it does not. */
 export async function patchConnection(
   userId: string,
-  purpose: Purpose,
   patch: Partial<Connection>,
 ): Promise<Connection | null> {
   try {
     const row = await db().connection.update({
-      where: key(userId, purpose),
+      where: { userId },
       data: toColumns(patch),
     });
     return toConnection(row);
@@ -174,23 +157,18 @@ export async function patchConnection(
  */
 export async function claimSync(
   userId: string,
-  purpose: Purpose,
   seenAt: string | undefined,
 ): Promise<boolean> {
   const { count } = await db().connection.updateMany({
-    where: {
-      userId,
-      purpose,
-      lastSyncAt: seenAt ? new Date(seenAt) : null,
-    },
+    where: { userId, lastSyncAt: seenAt ? new Date(seenAt) : null },
     data: { lastSyncAt: new Date() },
   });
   return count === 1;
 }
 
-export async function clearConnection(userId: string, purpose: Purpose) {
+export async function clearConnection(userId: string) {
   await db()
-    .connection.delete({ where: key(userId, purpose) })
+    .connection.delete({ where: { userId } })
     .catch(() => null);
 }
 
@@ -206,25 +184,18 @@ export async function findByWebhookToken(
   if (!token) return null;
 
   const row = await db().connection.findUnique({ where: { webhookToken: token } });
-  if (!row || row.purpose !== "catalogue") return null;
-
-  return { connection: toConnection(row) };
+  return row ? { connection: toConnection(row) } : null;
 }
 
 /**
- * The connection the shop itself uses for a purpose.
+ * The connection the catalogue is read from.
  *
- * There is one storefront, so an order placed by any customer is exported
- * through an administrator's connection — not the shopper's, who has none — and
- * the catalogue every visitor sees is imported through one too. Only a
- * configured connection counts: one without a sheet cannot do anything.
+ * An administrator's, because the catalogue is what the whole shop sells, and
+ * only a configured one: a connection without a sheet cannot be read.
  */
-export async function getShopConnection(
-  purpose: Purpose,
-): Promise<Connection | null> {
+export async function getShopConnection(): Promise<Connection | null> {
   const row = await db().connection.findFirst({
     where: {
-      purpose,
       spreadsheetId: { not: null },
       sheetId: { not: null },
       user: { role: "admin" },
@@ -235,26 +206,24 @@ export async function getShopConnection(
 }
 
 /**
- * Finds a connection of another purpose already using this exact sheet.
+ * Whether somebody else has already claimed this exact sheet.
  *
- * Reading products from the sheet the shop writes orders to creates a loop:
- * every order appends a row, the row trigger fires, the catalogue re-imports
- * from the order log, and the shop fills with nonsense or empties entirely.
- * Searches across all accounts, because the two connections may well be made by
- * different administrators.
+ * Two accounts sharing a sheet is the one arrangement that destroys data. If a
+ * shopper's orders are appended to the sheet the shop reads products from, the
+ * next import either sells the order rows or, once they stop parsing as
+ * products, empties the shelves — and this shop has had both. It is equally
+ * wrong in the other direction, an administrator adopting somebody's order log
+ * as the catalogue, so the rule is symmetric and needs no notion of purpose:
+ * one sheet, one owner.
  */
-export async function findSheetConflict(
-  purpose: Purpose,
+export async function sheetTakenBy(
   spreadsheetId: string,
   sheetId: string,
-): Promise<{ purpose: Purpose; spreadsheetLabel: string | null } | null> {
-  const other: Purpose = purpose === "catalogue" ? "orders" : "catalogue";
-
+  exceptUserId: string,
+): Promise<{ admin: boolean } | null> {
   const row = await db().connection.findFirst({
-    where: { purpose: other, spreadsheetId, sheetId },
+    where: { spreadsheetId, sheetId, userId: { not: exceptUserId } },
+    include: { user: { select: { role: true } } },
   });
-
-  return row
-    ? { purpose: other, spreadsheetLabel: row.spreadsheetLabel }
-    : null;
+  return row ? { admin: row.user.role === "admin" } : null;
 }

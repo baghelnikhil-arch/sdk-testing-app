@@ -1,8 +1,6 @@
 import { NextResponse } from "next/server";
-import { authErrorResponse } from "@/lib/auth";
-import { requireOwner } from "@/lib/end-user";
+import { authErrorResponse, requireUser } from "@/lib/auth";
 import { getConnection } from "@/lib/integration-store";
-import { parsePurpose } from "@/lib/purpose";
 import {
   ADD_ROWS_ACTION,
   FIELDS,
@@ -14,25 +12,20 @@ import {
 /**
  * Fills the pickers. One call per field.
  *
- * Each purpose reads its options from the action it will actually run, because
- * the field keys differ between them: "Add Multiple Rows" uses
+ * The options are read from the action this person's connection will actually
+ * run — an administrator lists rows to import, everyone else adds rows to
+ * export — because the field keys differ between them: "Add Multiple Rows" uses
  * `spreadSheet_Id`, "List Rows in Sheet" uses `spreadSheet_id`. Borrowing one
- * action's keys for another returns an empty list with a 200 rather than an
+ * action's keys for the other returns an empty list with a 200 rather than an
  * error, so the pairing is kept in one place.
  */
-const SOURCES = {
-  orders: { action: ADD_ROWS_ACTION, fields: FIELDS.addRows },
-  catalogue: { action: LIST_ROWS_ACTION, fields: FIELDS.listRows },
-} as const;
+const READ = { action: LIST_ROWS_ACTION, fields: FIELDS.listRows };
+const WRITE = { action: ADD_ROWS_ACTION, fields: FIELDS.addRows };
 
 export async function POST(request: Request) {
   try {
-    const { field, spreadsheetId, purpose: rawPurpose } = await request.json();
-    const purpose = parsePurpose(rawPurpose);
+    const { field, spreadsheetId } = await request.json();
 
-    if (!purpose) {
-      return NextResponse.json({ error: "Unknown purpose" }, { status: 400 });
-    }
     if (field !== "spreadsheet" && field !== "sheet") {
       return NextResponse.json(
         { error: "field must be 'spreadsheet' or 'sheet'" },
@@ -40,8 +33,8 @@ export async function POST(request: Request) {
       );
     }
 
-    const owner = await requireOwner(purpose);
-    const connection = await getConnection(owner.id, purpose);
+    const user = await requireUser();
+    const connection = await getConnection(user.id);
     if (!connection) {
       return NextResponse.json(
         { error: "Google Sheets is not connected yet." },
@@ -49,7 +42,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const { action, fields } = SOURCES[purpose];
+    const { action, fields } = user.role === "admin" ? READ : WRITE;
 
     if (field === "spreadsheet") {
       const { options } = await listOptions(

@@ -1,8 +1,6 @@
 import { NextResponse } from "next/server";
-import { authErrorResponse } from "@/lib/auth";
-import { requireOwner } from "@/lib/end-user";
+import { authErrorResponse, requireUser } from "@/lib/auth";
 import { getConnection, saveConnection } from "@/lib/integration-store";
-import { parsePurpose } from "@/lib/purpose";
 import {
   SERVICE_ID,
   ViasocketNotConfiguredError,
@@ -22,11 +20,7 @@ import {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const purpose = parsePurpose(body.purpose);
 
-    if (!purpose) {
-      return NextResponse.json({ error: "Unknown purpose" }, { status: 400 });
-    }
     if (typeof body.authId !== "string" || !body.authId) {
       return NextResponse.json({ error: "authId is required" }, { status: 400 });
     }
@@ -37,16 +31,16 @@ export async function POST(request: Request) {
       );
     }
 
-    const owner = await requireOwner(purpose);
-    const previous = await getConnection(owner.id, purpose);
-    const scriptId = await ensureEnabled(owner.viasocketId, body.authId);
+    const user = await requireUser();
+    const previous = await getConnection(user.id);
+    const scriptId = await ensureEnabled(user.viasocketId, body.authId);
 
     // Reconnecting with a different Google account invalidates the saved sheet:
     // those ids live in the old account's Drive and would either fail or, worse,
     // resolve to something unrelated.
     const destinationCleared = Boolean(previous && previous.authId !== body.authId);
 
-    const record = await saveConnection(owner, purpose, {
+    const record = await saveConnection(user, {
       authId: body.authId,
       scriptId,
       ...(destinationCleared

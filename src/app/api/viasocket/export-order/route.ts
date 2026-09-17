@@ -68,7 +68,7 @@ export async function POST(request: Request) {
    * customer's orders can never be written into another's spreadsheet, and
    * someone who has connected nothing simply gets an order without an export.
    */
-  const integration = await getConnection(user.id, "orders");
+  const integration = await getConnection(user.id);
   if (!integration?.spreadsheetId || !integration?.sheetId) {
     return NextResponse.json({
       ordered: true,
@@ -93,7 +93,7 @@ export async function POST(request: Request) {
       rows_json: JSON.stringify(rows),
     });
 
-    await patchConnection(integration.userId, "orders", {
+    await patchConnection(integration.userId, {
       lastExportAt: new Date().toISOString(),
     });
     await markOrderExported(order.id, true);

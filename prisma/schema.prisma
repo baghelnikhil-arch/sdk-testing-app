@@ -11,10 +11,13 @@ datasource db {
   provider = "postgresql"
 }
 
-/// One connected Google account, scoped to what it is used for.
+/// One person's connected Google account and the sheet they chose.
 ///
-/// A person may connect one account to read the catalogue and a different one to
-/// write orders, so the unique key is the pair, not the user alone.
+/// One row per account, and what it is used for follows from who owns it: an
+/// administrator's sheet is where the shop reads its catalogue, anyone else's is
+/// where their own orders are written. There is deliberately no column saying
+/// which — a connection that exists is simply used, and changing the sheet is
+/// what the Change sheet button is for.
 model Connection {
   id        String @id @default(cuid())
 
@@ -28,8 +31,6 @@ model Connection {
   /// find a connection: changing it makes viaSocket treat the owner as somebody
   /// else and every connection they made appears lost.
   endUserId String
-  /// "orders" | "catalogue"
-  purpose   String
 
   /// viaSocket authentication id. Not a Google token — viaSocket holds those.
   authId   String
@@ -59,10 +60,9 @@ model Connection {
 
   updatedAt DateTime @updatedAt
 
-  @@unique([userId, purpose])
+  @@unique([userId])
   @@index([endUserId])
   @@index([spreadsheetId, sheetId])
-  @@index([userId])
 }
 
 /// Everything the shop sells.

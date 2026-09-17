@@ -72,7 +72,7 @@ function resolvePublicBaseUrl(): { origin: string } | { error: string } {
 export async function POST() {
   try {
     const admin = await requireAdmin();
-    const connection = await getConnection(admin.id, "catalogue");
+    const connection = await getConnection(admin.id);
 
     if (!connection?.spreadsheetId || !connection?.sheetId) {
       return NextResponse.json(
@@ -115,13 +115,13 @@ export async function POST() {
         column_key: true,
       },
       webhook,
-      { purpose: "catalogue", user: connection.endUserId },
+      { user: connection.endUserId },
     );
 
     // The subscription script_id is the only handle to it — the flows listing
     // cannot tell a subscription from an enabled app — so it is stored before
     // anything else can fail.
-    await patchConnection(connection.userId, "catalogue", {
+    await patchConnection(connection.userId, {
       subscriptionId,
       webhookToken,
     });
@@ -142,13 +142,13 @@ export async function POST() {
 export async function DELETE() {
   try {
     const admin = await requireAdmin();
-    const connection = await getConnection(admin.id, "catalogue");
+    const connection = await getConnection(admin.id);
 
     if (connection?.subscriptionId) {
       await setFlowStatus(connection.endUserId, connection.subscriptionId, 0);
     }
     if (connection) {
-      await patchConnection(connection.userId, "catalogue", {
+      await patchConnection(connection.userId, {
         subscriptionId: undefined,
         webhookToken: undefined,
       });

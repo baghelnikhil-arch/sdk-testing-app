@@ -30,7 +30,7 @@ const ACTION_LINK =
  * different blast radius, same underlying hook.
  */
 export function CheckoutSheetsPanel() {
-  const sheets = useGoogleSheets("orders");
+  const sheets = useGoogleSheets();
   const { status, error, busy, editing } = sheets;
 
   // Nothing to offer until the integration is available, and nothing to offer a

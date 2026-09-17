@@ -14,7 +14,7 @@ import { SYNC_INTERVALS } from "@/lib/sync-intervals";
 export async function POST(request: Request) {
   try {
     const admin = await requireAdmin();
-    const connection = await getConnection(admin.id, "catalogue");
+    const connection = await getConnection(admin.id);
 
     if (!connection) {
       return NextResponse.json(
@@ -32,7 +32,7 @@ export async function POST(request: Request) {
       );
     }
 
-    await patchConnection(connection.userId, "catalogue", {
+    await patchConnection(connection.userId, {
       syncIntervalMinutes: minutes ?? undefined,
     });
 

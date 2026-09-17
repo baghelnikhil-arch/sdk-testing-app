@@ -15,8 +15,6 @@ export const SHEETS_ICON =
 
 export type Option = { label: string; value: string };
 
-export type Purpose = "orders" | "catalogue";
-
 export type SheetsStatus = {
   configured: boolean;
   /** Connections hang off an account, so there is nothing to offer a guest. */
@@ -58,13 +56,13 @@ async function postJSON(url: string, body: unknown, method = "POST") {
 export type Busy = "connect" | "save" | "disconnect" | null;
 
 /**
- * One connection, scoped to a purpose. Exporting orders and importing the
- * catalogue are separate connections — separate Google accounts, separate
- * sheets — so every call carries the purpose and two instances of this hook
- * never see each other's state.
+ * The signed-in person's one Google Sheets connection.
+ *
+ * No purpose is passed: the server reads the connection under whoever is
+ * signed in, and what it is for follows from their role. The admin page and the
+ * checkout panel are two presentations of the same single connection.
  */
 export function useGoogleSheets(
-  purpose: Purpose = "orders",
   /**
    * Called with the save response. Saving a product sheet imports it in the
    * same request, so the catalogue card uses this to show what arrived and to
@@ -90,13 +88,13 @@ export function useGoogleSheets(
 
   const refresh = useCallback(async () => {
     const response = await fetch(
-      `/api/viasocket/destination?purpose=${purpose}`,
+      "/api/viasocket/destination",
       { cache: "no-store" },
     );
     const next: SheetsStatus = await response.json();
     setStatus(next);
     return next;
-  }, [purpose]);
+  }, []);
 
   useEffect(() => {
     refresh().catch((e) => setError((e as Error).message));
@@ -109,7 +107,6 @@ export function useGoogleSheets(
     try {
       const { options } = await postJSON("/api/viasocket/options", {
         field: "spreadsheet",
-        purpose,
       });
       setSpreadsheets(options ?? []);
     } catch (e) {
@@ -117,7 +114,7 @@ export function useGoogleSheets(
     } finally {
       setLoadingField(null);
     }
-  }, [purpose]);
+  }, []);
 
   // A tab only means something inside a spreadsheet, so this waits for one.
   const loadSheets = useCallback(
@@ -128,7 +125,6 @@ export function useGoogleSheets(
         const { options } = await postJSON("/api/viasocket/options", {
           field: "sheet",
           spreadsheetId: parentId,
-          purpose,
         });
         setSheets(options ?? []);
       } catch (e) {
@@ -137,7 +133,7 @@ export function useGoogleSheets(
         setLoadingField(null);
       }
     },
-    [purpose],
+    [],
   );
 
   // Connected but no destination yet: there is nothing to do but pick one.
@@ -170,7 +166,6 @@ export function useGoogleSheets(
           const result = await postJSON("/api/viasocket/connected", {
             serviceId: data.serviceId,
             authId: data.data?.id,
-            purpose,
           });
 
           // A different Google account means the old sheet ids are meaningless.
@@ -199,7 +194,7 @@ export function useGoogleSheets(
 
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [refresh, purpose]);
+  }, [refresh]);
 
   /** Opens Google's consent screen. Also used to switch to another account. */
   const connect = useCallback(async () => {
@@ -247,7 +242,7 @@ export function useGoogleSheets(
     setSaved(false);
     try {
       const payload = await postJSON(
-        `/api/viasocket/destination?purpose=${purpose}`,
+        "/api/viasocket/destination",
         {
           spreadsheetId,
           spreadsheetLabel: spreadsheets.find((o) => o.value === spreadsheetId)
@@ -266,15 +261,13 @@ export function useGoogleSheets(
     } finally {
       setBusy(null);
     }
-  }, [spreadsheetId, sheetId, spreadsheets, sheets, refresh, purpose, onSaved]);
+  }, [spreadsheetId, sheetId, spreadsheets, sheets, refresh, onSaved]);
 
   const disconnect = useCallback(async () => {
     setBusy("disconnect");
     setError(null);
     try {
-      await fetch(`/api/viasocket/destination?purpose=${purpose}`, {
-        method: "DELETE",
-      });
+      await fetch("/api/viasocket/destination", { method: "DELETE" });
       setSpreadsheets([]);
       setSheets([]);
       setSpreadsheetId("");
@@ -287,7 +280,7 @@ export function useGoogleSheets(
     } finally {
       setBusy(null);
     }
-  }, [refresh, purpose]);
+  }, [refresh]);
 
   const beginEdit = useCallback(() => {
     setSaved(false);
@@ -301,7 +294,6 @@ export function useGoogleSheets(
   }, []);
 
   return {
-    purpose,
     status,
     error,
     setError,

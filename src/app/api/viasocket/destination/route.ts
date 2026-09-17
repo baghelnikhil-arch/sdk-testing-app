@@ -1,13 +1,12 @@
 import { NextResponse } from "next/server";
-import { authErrorResponse, getCurrentUser } from "@/lib/auth";
-import { requireOwner } from "@/lib/end-user";
+import { revalidatePath } from "next/cache";
+import { authErrorResponse, getCurrentUser, requireUser } from "@/lib/auth";
 import {
   clearConnection,
-  findSheetConflict,
   getConnection,
+  sheetTakenBy,
   patchConnection,
 } from "@/lib/integration-store";
-import { purposeFromSearch } from "@/lib/purpose";
 import {
   ViasocketNotConfiguredError,
   isConfigured,
@@ -17,28 +16,26 @@ import {
 } from "@/lib/viasocket";
 import { isDatabaseConfigured } from "@/lib/db";
 import { syncCatalogue } from "@/lib/sync-catalogue";
-import { revalidatePath } from "next/cache";
+
+/**
+ * One person's Google Sheets connection.
+ *
+ * There is no purpose to pass: a connection belongs to whoever is signed in,
+ * and what it is used for follows from their role — an administrator's sheet is
+ * the shop's catalogue, anybody else's is their own order log.
+ */
 
 /** What the browser is allowed to know: labels and readiness, never the ids. */
-export async function GET(request: Request) {
-  const purpose = purposeFromSearch(request.url);
-  if (!purpose) {
-    return NextResponse.json({ error: "Unknown purpose" }, { status: 400 });
-  }
-
+export async function GET() {
   const user = await getCurrentUser();
   const storage = isDatabaseConfigured() ? "database" : "none";
 
-  // A missing store is reported, not thrown: the settings page should explain
-  // the problem rather than render an error.
-  // The catalogue belongs to the shop; an order sheet belongs to whoever is
-  // signed in. Nobody is ever shown somebody else's.
-  const mayHold = user && (purpose === "orders" || user.role === "admin");
-
+  // A missing store is reported, not thrown: the page should explain the
+  // problem rather than render an error.
   let connection = null;
   let storageError: string | null = null;
   try {
-    connection = mayHold ? await getConnection(user.id, purpose) : null;
+    connection = user ? await getConnection(user.id) : null;
   } catch (error) {
     storageError = (error as Error).message;
   }
@@ -58,7 +55,7 @@ export async function GET(request: Request) {
         connection.subscriptionId,
       );
       if (!watching) {
-        await patchConnection(connection.userId, purpose, {
+        await patchConnection(connection.userId, {
           subscriptionId: undefined,
           webhookToken: undefined,
         });
@@ -72,6 +69,7 @@ export async function GET(request: Request) {
   return NextResponse.json({
     configured: isConfigured(),
     signedIn: Boolean(user),
+    admin: user?.role === "admin",
     storage,
     storageError,
     connected: Boolean(connection),
@@ -89,13 +87,8 @@ export async function GET(request: Request) {
 /** Stores the spreadsheet and tab the user picked. */
 export async function PUT(request: Request) {
   try {
-    const purpose = purposeFromSearch(request.url);
-    if (!purpose) {
-      return NextResponse.json({ error: "Unknown purpose" }, { status: 400 });
-    }
-
-    const owner = await requireOwner(purpose);
-    const existing = await getConnection(owner.id, purpose);
+    const user = await requireUser();
+    const existing = await getConnection(user.id);
     const { spreadsheetId, spreadsheetLabel, sheetId, sheetLabel } =
       await request.json();
 
@@ -106,19 +99,6 @@ export async function PUT(request: Request) {
       );
     }
 
-    const conflict = await findSheetConflict(purpose, spreadsheetId, sheetId);
-    if (conflict) {
-      return NextResponse.json(
-        {
-          error:
-            purpose === "catalogue"
-              ? "That sheet is already where orders are written. Reading products from the order log would re-import your orders as products. Pick a different sheet."
-              : "That sheet is already the product source. Writing orders into it would corrupt your catalogue. Pick a different sheet.",
-        },
-        { status: 409 },
-      );
-    }
-
     if (!existing) {
       return NextResponse.json(
         { error: "Google Sheets is not connected yet." },
@@ -126,7 +106,21 @@ export async function PUT(request: Request) {
       );
     }
 
-    const updated = await patchConnection(existing.userId, purpose, {
+    // One sheet, one owner — see `sheetTakenBy`. Sharing one is how a shop
+    // ends up selling its own order log, or losing its catalogue to it.
+    const taken = await sheetTakenBy(spreadsheetId, sheetId, user.id);
+    if (taken) {
+      return NextResponse.json(
+        {
+          error: taken.admin
+            ? "That sheet is where this shop reads its products from. Writing orders into it would corrupt the catalogue — pick a different sheet."
+            : "Somebody else is already using that sheet. Pick one of your own.",
+        },
+        { status: 409 },
+      );
+    }
+
+    const updated = await patchConnection(user.id, {
       spreadsheetId,
       spreadsheetLabel: String(spreadsheetLabel ?? spreadsheetId),
       sheetId,
@@ -141,18 +135,15 @@ export async function PUT(request: Request) {
     }
 
     /*
-     * Choosing a product sheet imports it straight away.
-     *
-     * Without this the shop sits empty between saving the sheet and remembering
-     * to press Import, which reads as "my products disappeared" — especially
-     * after a reconnect, where disconnecting has just removed them. A failure
-     * here is reported but does not fail the save: the sheet is chosen either
-     * way, and Import now is still there to retry.
+     * An administrator choosing a sheet is choosing what the shop sells, so it
+     * is imported straight away. Without this the shop sits empty between
+     * saving the sheet and remembering to press Import, which reads as "my
+     * products disappeared". A failure is reported but does not fail the save.
      */
     let imported: number | null = null;
     let syncError: string | null = null;
 
-    if (purpose === "catalogue") {
+    if (user.role === "admin") {
       try {
         imported = (await syncCatalogue(updated)).imported;
       } catch (error) {
@@ -168,8 +159,6 @@ export async function PUT(request: Request) {
       syncError,
     });
   } catch (error) {
-    // Without this, a customer poking at the catalogue got a bare 500
-    // instead of being told plainly that it is not theirs to change.
     const denied = authErrorResponse(error);
     if (denied) {
       return NextResponse.json({ error: denied.error }, { status: denied.status });
@@ -184,21 +173,14 @@ export async function PUT(request: Request) {
 /**
  * Disconnects. Flows are disabled *before* the authentication is revoked —
  * revoking first would leave flows pointing at an auth that no longer exists.
- *
- * The other purpose's connection is untouched, even when both use the same
- * Google account: they are independent from the operator's point of view.
  */
-export async function DELETE(request: Request) {
-  const purpose = purposeFromSearch(request.url);
-  if (!purpose) {
-    return NextResponse.json({ error: "Unknown purpose" }, { status: 400 });
-  }
-
+export async function DELETE() {
   try {
-    const owner = await requireOwner(purpose);
-    const connection = await getConnection(owner.id, purpose);
+    const user = await requireUser();
+    const connection = await getConnection(user.id);
     if (!connection) return NextResponse.json({ connected: false });
-    const endUserId = connection.endUserId;
+
+    const { endUserId } = connection;
 
     // A trigger subscription is a flow of its own and has to be stopped too.
     if (connection.subscriptionId) {
@@ -206,7 +188,7 @@ export async function DELETE(request: Request) {
     }
     await setFlowStatus(endUserId, connection.scriptId, 0).catch(() => {});
     await revokeConnection(endUserId, connection.authId);
-    await clearConnection(connection.userId, purpose);
+    await clearConnection(user.id);
 
     /*
      * Imported products stay.
@@ -216,12 +198,9 @@ export async function DELETE(request: Request) {
      * or reconnecting under a different Google account — silently empty the
      * shop, and the operator had no way back except to reconnect and import
      * again. The catalogue is the shop's own data now; the sheet is only where
-     * it was typed. Replacing them is what an import is for, and Disconnect
-     * only stops new ones arriving.
+     * it was typed.
      */
-    if (purpose === "catalogue") {
-      revalidatePath("/", "layout");
-    }
+    revalidatePath("/", "layout");
 
     return NextResponse.json({ connected: false });
   } catch (error) {

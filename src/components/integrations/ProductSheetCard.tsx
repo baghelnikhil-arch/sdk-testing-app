@@ -65,7 +65,7 @@ export function ProductSheetCard() {
     [catalogue, router],
   );
 
-  const sheets = useGoogleSheets("catalogue", onSaved);
+  const sheets = useGoogleSheets(onSaved);
 
   const status = sheets.status;
 
