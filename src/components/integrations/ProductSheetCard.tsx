@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { SheetsConnectionCard } from "./SheetsConnectionCard";
+import { INTERVAL_LABELS, SYNC_INTERVALS } from "@/lib/sync-intervals";
 import { useCatalogue } from "@/hooks/use-catalogue";
 import { useGoogleSheets } from "@/hooks/use-google-sheets";
 import { formatDate } from "@/lib/utils";
@@ -45,7 +46,6 @@ const COLUMNS: { header: string; note: string }[] = [
  * owned by another.
  */
 export function ProductSheetCard() {
-  const sheets = useGoogleSheets("catalogue");
   const catalogue = useCatalogue();
   const router = useRouter();
 
@@ -53,6 +53,19 @@ export function ProductSheetCard() {
   const [watchBusy, setWatchBusy] = useState(false);
   const [result, setResult] = useState<SyncResult | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
+
+  // Saving a product sheet imports it server-side, so the list this card holds
+  // and the server-rendered shop are both a step behind until they are told.
+  const onSaved = useCallback(
+    async (payload: { syncError?: string | null }) => {
+      setLocalError(payload.syncError ?? null);
+      await catalogue.refresh();
+      router.refresh();
+    },
+    [catalogue, router],
+  );
+
+  const sheets = useGoogleSheets("catalogue", onSaved);
 
   const status = sheets.status;
 
@@ -92,6 +105,22 @@ export function ProductSheetCard() {
       setLocalError((error as Error).message);
     } finally {
       setWatchBusy(false);
+    }
+  }
+
+  async function chooseInterval(minutes: number | null) {
+    setLocalError(null);
+    try {
+      const response = await fetch("/api/viasocket/sync-schedule", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ minutes }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Could not change the schedule.");
+      await sheets.refresh();
+    } catch (error) {
+      setLocalError((error as Error).message);
     }
   }
 
@@ -135,6 +164,44 @@ export function ProductSheetCard() {
           {status?.watching
             ? "New rows are imported automatically as they are added. Import now also picks up edits and deletions."
             : "Live updates let viaSocket call this app when a row is added, so it needs a public address (a deployed URL, or a tunnel while developing). On localhost, use Import now instead."}
+        </p>
+
+        {/*
+          The trigger only reports rows being ADDED. A price corrected in the
+          sheet, or a row deleted, never fires it — so a periodic full re-read
+          is what keeps the shop and the spreadsheet actually equal.
+        */}
+        <div className="mt-5 flex flex-wrap items-center gap-3">
+          <label
+            htmlFor="sync-interval"
+            className="text-sm font-medium text-foreground"
+          >
+            Re-check the sheet
+          </label>
+
+          <select
+            id="sync-interval"
+            value={status?.syncIntervalMinutes ?? ""}
+            onChange={(event) =>
+              chooseInterval(
+                event.target.value ? Number(event.target.value) : null,
+              )
+            }
+            className="h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground transition-colors hover:border-foreground/30 focus:border-foreground focus:outline-none"
+          >
+            <option value="">Only when I ask</option>
+            {SYNC_INTERVALS.map((minutes) => (
+              <option key={minutes} value={minutes}>
+                {INTERVAL_LABELS[minutes]}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <p className="mt-2.5 text-xs leading-relaxed text-muted-foreground">
+          {status?.syncIntervalMinutes
+            ? `The whole sheet is read again every ${INTERVAL_LABELS[status.syncIntervalMinutes] ?? `${status.syncIntervalMinutes} minutes`}, so edits and deleted rows catch up too. It runs while the shop has visitors.`
+            : "Live updates only notice rows being added. Pick an interval to have edits and deleted rows picked up as well."}
         </p>
 
         {status?.lastSyncAt && (

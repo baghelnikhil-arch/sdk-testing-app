@@ -15,7 +15,7 @@ import {
   setFlowStatus,
 } from "@/lib/viasocket";
 import { isDatabaseConfigured } from "@/lib/db";
-import { clearSheetProducts } from "@/lib/shop-data";
+import { syncCatalogue } from "@/lib/sync-catalogue";
 import { revalidatePath } from "next/cache";
 
 /** What the browser is allowed to know: labels and readiness, never the ids. */
@@ -76,6 +76,7 @@ export async function GET(request: Request) {
     lastExportAt: connection?.lastExportAt ?? null,
     lastSyncAt: connection?.lastSyncAt ?? null,
     lastSyncCount: connection?.lastSyncCount ?? null,
+    syncIntervalMinutes: connection?.syncIntervalMinutes ?? null,
     watching,
   });
 }
@@ -133,10 +134,32 @@ export async function PUT(request: Request) {
     );
   }
 
+  /*
+   * Choosing a product sheet imports it straight away.
+   *
+   * Without this the shop sits empty between saving the sheet and remembering
+   * to press Import, which reads as "my products disappeared" — especially
+   * after a reconnect, where disconnecting has just removed them. A failure
+   * here is reported but does not fail the save: the sheet is chosen either
+   * way, and Import now is still there to retry.
+   */
+  let imported: number | null = null;
+  let syncError: string | null = null;
+
+  if (purpose === "catalogue") {
+    try {
+      imported = (await syncCatalogue(updated)).imported;
+    } catch (error) {
+      syncError = (error as Error).message;
+    }
+  }
+
   return NextResponse.json({
     ready: true,
     spreadsheetLabel: updated.spreadsheetLabel,
     sheetLabel: updated.sheetLabel,
+    imported,
+    syncError,
   });
 }
 
@@ -167,9 +190,18 @@ export async function DELETE(request: Request) {
     await revokeConnection(endUserId, connection.authId);
     await clearConnection(endUserId, purpose);
 
-    // Imported products came from this sheet; they should not outlive it.
+    /*
+     * Imported products stay.
+     *
+     * They were deleted here once, on the reasoning that they came from this
+     * sheet and should not outlive it. In practice that made disconnecting —
+     * or reconnecting under a different Google account — silently empty the
+     * shop, and the operator had no way back except to reconnect and import
+     * again. The catalogue is the shop's own data now; the sheet is only where
+     * it was typed. Replacing them is what an import is for, and Disconnect
+     * only stops new ones arriving.
+     */
     if (purpose === "catalogue") {
-      await clearSheetProducts();
       revalidatePath("/", "layout");
     }
 

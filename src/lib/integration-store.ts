@@ -31,6 +31,8 @@ export type Connection = {
   lastExportAt?: string;
   lastSyncAt?: string;
   lastSyncCount?: number;
+  /** Minutes between automatic re-reads; undefined means on demand only. */
+  syncIntervalMinutes?: number;
   subscriptionId?: string;
   webhookToken?: string;
 };
@@ -47,6 +49,7 @@ type Row = {
   lastExportAt: Date | null;
   lastSyncAt: Date | null;
   lastSyncCount: number | null;
+  syncIntervalMinutes: number | null;
   subscriptionId: string | null;
   webhookToken: string | null;
 };
@@ -65,6 +68,7 @@ function toConnection(row: Row): Connection {
     lastExportAt: row.lastExportAt?.toISOString(),
     lastSyncAt: row.lastSyncAt?.toISOString(),
     lastSyncCount: row.lastSyncCount ?? undefined,
+    syncIntervalMinutes: row.syncIntervalMinutes ?? undefined,
     subscriptionId: row.subscriptionId ?? undefined,
     webhookToken: row.webhookToken ?? undefined,
   };
@@ -151,6 +155,31 @@ export async function patchConnection(
   } catch {
     return null;
   }
+}
+
+/**
+ * Claims the right to run a scheduled sync, once.
+ *
+ * The timer is driven by visitors rather than a cron, so several requests can
+ * decide a sync is due at the same moment. The claim is a compare-and-set on
+ * the timestamp that was read: whoever moves it first wins, everyone else is
+ * told no and does nothing. Stamping it *before* the sync also means a sync
+ * that hangs or throws does not invite a retry on every single page view.
+ */
+export async function claimSync(
+  endUserId: string,
+  purpose: Purpose,
+  seenAt: string | undefined,
+): Promise<boolean> {
+  const { count } = await db().connection.updateMany({
+    where: {
+      endUserId,
+      purpose,
+      lastSyncAt: seenAt ? new Date(seenAt) : null,
+    },
+    data: { lastSyncAt: new Date() },
+  });
+  return count === 1;
 }
 
 export async function clearConnection(endUserId: string, purpose: Purpose) {

@@ -1,10 +1,12 @@
 import { revalidatePath } from "next/cache";
 import {
+  claimSync,
   findSheetConflict,
+  getShopConnection,
   patchConnection,
   type Connection,
 } from "./integration-store";
-import { countSheetProducts, replaceSheetProducts } from "./shop-data";
+import { countSheetProducts, writeSheetProducts } from "./shop-data";
 import { extractRows, mapRowsToProducts, usesFallbackImage } from "./catalogue";
 import { FIELDS, LIST_ROWS_ACTION, runAction } from "./viasocket";
 
@@ -22,15 +24,63 @@ export type SyncResult = {
 };
 
 /**
- * Pulls the whole product sheet and replaces the imported catalogue with it.
+ * Re-reads the sheet when the chosen interval has elapsed.
  *
- * Replacing rather than appending is deliberate: a full read is idempotent, so
- * running it twice is harmless, and rows deleted in the sheet disappear from the
- * shop. It also means the webhook can simply re-sync instead of trying to apply
- * a single row event — which matters because the event payload has no published
- * schema.
+ * The row trigger only reports rows being added, so a price corrected in the
+ * sheet, a row deleted, or an event missed while the subscription was dead all
+ * leave the shop quietly disagreeing with the spreadsheet. A full re-read on a
+ * timer is what closes that gap — the same full replace the Import button does,
+ * which is why it is safe to run unattended.
+ *
+ * There is no scheduler here: this is called as visitors arrive, which is both
+ * the cheapest thing that works on any host and enough for a shop, where
+ * "nobody is looking" and "nothing needs importing" are the same state.
  */
-export async function syncCatalogue(connection: Connection): Promise<SyncResult> {
+export async function autoSyncIfDue(): Promise<void> {
+  let connection: Connection | null = null;
+
+  try {
+    connection = await getShopConnection("catalogue");
+  } catch {
+    return; // No database, no schedule.
+  }
+
+  const minutes = connection?.syncIntervalMinutes;
+  if (!connection || !minutes || !connection.spreadsheetId) return;
+
+  const last = connection.lastSyncAt ? Date.parse(connection.lastSyncAt) : 0;
+  if (Date.now() - last < minutes * 60_000) return;
+
+  // Only the request that wins the claim does the work.
+  if (!(await claimSync(connection.endUserId, "catalogue", connection.lastSyncAt))) {
+    return;
+  }
+
+  try {
+    await syncCatalogue(connection);
+  } catch {
+    // A failed scheduled sync is not worth surfacing to a shopper; the next
+    // interval tries again, and Import now reports the real error.
+  }
+}
+
+/**
+ * Reads the whole product sheet and writes it into the shop's catalogue.
+ *
+ * Always a full read, never an attempt to apply one row event: the event
+ * payload has no published schema, so the sheet itself is the only thing worth
+ * trusting. Each row is then upserted, which makes running this twice harmless
+ * and leaves untouched products — and their reviews — exactly as they were.
+ */
+export async function syncCatalogue(
+  connection: Connection,
+  /**
+   * A full re-read reconciles: rows deleted from the sheet leave the shop. A
+   * live-update delivery does not — the event names one added row, and the
+   * read that follows it is only how we learn what that row contains.
+   */
+  { prune = true }: { prune?: boolean } = {},
+): Promise<SyncResult> {
   if (!connection.spreadsheetId || !connection.sheetId) {
     throw new Error("No product sheet is selected.");
   }
@@ -81,8 +131,9 @@ export async function syncCatalogue(connection: Connection): Promise<SyncResult>
    * An import that yields nothing is a misconfiguration — the wrong tab, a
    * renamed header — far more often than a deliberate "remove every product".
    * A webhook can fire one of these without anybody pressing a button, so this
-   * check has to happen BEFORE the write, not after it. Emptying the shop
-   * deliberately is still possible: disconnect the catalogue connection.
+   * check has to happen BEFORE the write, not after it. Clearing the shelves
+   * deliberately means emptying the sheet of everything except its headers,
+   * which is a thing somebody has to mean to do.
    */
   if (kept.length === 0) {
     const existing = await countSheetProducts();
@@ -97,19 +148,30 @@ export async function syncCatalogue(connection: Connection): Promise<SyncResult>
     }
   }
 
-  await replaceSheetProducts(kept, {
-    spreadsheet: connection.spreadsheetLabel ?? connection.spreadsheetId,
-    sheet: connection.sheetLabel ?? connection.sheetId,
-  });
+  await writeSheetProducts(
+    kept,
+    {
+      spreadsheet: connection.spreadsheetLabel ?? connection.spreadsheetId,
+      sheet: connection.sheetLabel ?? connection.sheetId,
+    },
+    { prune },
+  );
 
   await patchConnection(connection.endUserId, "catalogue", {
     lastSyncAt: new Date().toISOString(),
     lastSyncCount: kept.length,
   });
 
-  // Product pages are cached; without this a new row would not appear until the
-  // next deploy.
-  revalidatePath("/", "layout");
+  /*
+   * Product pages are cached, so a new row would otherwise wait for the next
+   * deploy. This throws when there is no request to hang the revalidation on —
+   * a scheduled sync running after the response, or a script — and that is not
+   * a failure: those callers write to the database, and the storefront renders
+   * on demand, so the next visitor sees the new catalogue regardless.
+   */
+  try {
+    revalidatePath("/", "layout");
+  } catch {}
 
   return {
     imported: kept.length,

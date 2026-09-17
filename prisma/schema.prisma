@@ -46,6 +46,11 @@ model Connection {
   lastSyncAt    DateTime?
   lastSyncCount Int?
 
+  /// How often to re-read the sheet, in minutes. Null means only on demand.
+  /// A sheet can be edited in ways the row trigger never reports — a price
+  /// corrected, a row deleted — so the shop drifts from the sheet without it.
+  syncIntervalMinutes Int?
+
   /// The trigger subscription's own script_id — the only handle to it.
   subscriptionId String?
   /// Shared secret in the webhook URL, because viaSocket does not sign events.

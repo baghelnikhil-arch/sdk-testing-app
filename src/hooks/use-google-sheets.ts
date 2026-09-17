@@ -29,6 +29,8 @@ export type SheetsStatus = {
   lastExportAt: string | null;
   lastSyncAt: string | null;
   lastSyncCount: number | null;
+  /** Minutes between automatic re-reads; null when only on demand. */
+  syncIntervalMinutes: number | null;
   watching: boolean;
 };
 
@@ -59,7 +61,15 @@ export type Busy = "connect" | "save" | "disconnect" | null;
  * sheets — so every call carries the purpose and two instances of this hook
  * never see each other's state.
  */
-export function useGoogleSheets(purpose: Purpose = "orders") {
+export function useGoogleSheets(
+  purpose: Purpose = "orders",
+  /**
+   * Called with the save response. Saving a product sheet imports it in the
+   * same request, so the catalogue card uses this to show what arrived and to
+   * refresh the product list it is holding.
+   */
+  onSaved?: (payload: { imported?: number | null; syncError?: string | null }) => void,
+) {
   const [status, setStatus] = useState<SheetsStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<Busy>(null);
@@ -234,7 +244,7 @@ export function useGoogleSheets(purpose: Purpose = "orders") {
     setError(null);
     setSaved(false);
     try {
-      await postJSON(
+      const payload = await postJSON(
         `/api/viasocket/destination?purpose=${purpose}`,
         {
           spreadsheetId,
@@ -248,12 +258,13 @@ export function useGoogleSheets(purpose: Purpose = "orders") {
       await refresh();
       setSaved(true);
       setEditing(false);
+      onSaved?.(payload);
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setBusy(null);
     }
-  }, [spreadsheetId, sheetId, spreadsheets, sheets, refresh, purpose]);
+  }, [spreadsheetId, sheetId, spreadsheets, sheets, refresh, purpose, onSaved]);
 
   const disconnect = useCallback(async () => {
     setBusy("disconnect");

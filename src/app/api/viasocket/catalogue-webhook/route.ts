@@ -10,6 +10,11 @@ import { syncCatalogue } from "@/lib/sync-catalogue";
  * only ever shared with viaSocket. Treat the request body as untrusted: it is
  * used as a signal that something changed, never as data. The sheet is then
  * re-read through the authenticated action, which is the only source we trust.
+ *
+ * The re-read does not prune. This event means a row was added; it says nothing
+ * about the rows it did not mention, and a delivery arriving while the sheet is
+ * half-edited must not take products out of the shop. Removing what is gone is
+ * the scheduled re-read's job.
  */
 export async function POST(request: Request) {
   const token = new URL(request.url).searchParams.get("token") ?? "";
@@ -21,7 +26,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await syncCatalogue(match.connection);
+    const result = await syncCatalogue(match.connection, { prune: false });
     return NextResponse.json({ ok: true, imported: result.imported });
   } catch (error) {
     // Returning 200 would tell viaSocket the delivery succeeded.

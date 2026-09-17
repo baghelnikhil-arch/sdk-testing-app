@@ -128,46 +128,73 @@ export async function getReviews(productId: string): Promise<Review[]> {
 }
 
 /**
- * Replaces every sheet-imported product with a new set, in one transaction, so
- * the shop is never briefly missing its stock. Seed products are untouched.
+ * Writes imported products into the shop's own catalogue.
+ *
+ * Each row is upserted rather than the whole set being deleted and recreated.
+ * That was the old shape, and it meant every import — including one fired by a
+ * single new row arriving — briefly destroyed every imported product, taking
+ * their reviews with them permanently, since Review cascades from Product. A
+ * product that has not changed is now simply updated in place.
+ *
+ * `prune` says whether products missing from this payload should be removed.
+ * A full re-read sets it, so a row deleted in the sheet leaves the shop. The
+ * live-update path does not: one added row says nothing about the rest.
  */
-export async function replaceSheetProducts(
+export async function writeSheetProducts(
   products: Product[],
   source: { spreadsheet: string; sheet: string },
+  { prune }: { prune: boolean },
 ) {
   const syncedAt = new Date();
 
+  const rows = products.map((product, position) => ({
+    id: product.id,
+    position,
+    sourceSpreadsheet: source.spreadsheet,
+    sourceSheet: source.sheet,
+    syncedAt,
+    ...productColumns(product),
+  }));
+
   await db().$transaction([
-    db().product.deleteMany({ where: { source: "sheet" } }),
-    db().product.createMany({
-      data: products.map((product, position) => ({
-        id: product.id,
-        source: "sheet",
-        name: product.name,
-        slug: product.slug,
-        category: product.category,
-        description: product.description,
-        price: product.price,
-        originalPrice: product.originalPrice ?? null,
-        rating: product.rating,
-        reviewCount: product.reviewCount,
-        images: product.images,
-        sizes: product.sizes ?? [],
-        tags: product.tags ?? [],
-        details: product.details ?? [],
-        colors: (product.colors ?? undefined) as Prisma.InputJsonValue,
-        specifications: (product.specifications ??
-          undefined) as Prisma.InputJsonValue,
-        featured: product.featured ?? false,
-        newArrival: product.newArrival ?? false,
-        inStock: product.inStock,
-        position,
-        sourceSpreadsheet: source.spreadsheet,
-        sourceSheet: source.sheet,
-        syncedAt,
-      })),
-    }),
+    ...rows.map(({ id, ...fields }) =>
+      db().product.upsert({
+        where: { id },
+        update: fields,
+        create: { id, source: "sheet", ...fields },
+      }),
+    ),
+    ...(prune
+      ? [
+          db().product.deleteMany({
+            where: { source: "sheet", id: { notIn: rows.map((r) => r.id) } },
+          }),
+        ]
+      : []),
   ]);
+}
+
+/** The spreadsheet-derived columns, shared by insert and update. */
+function productColumns(product: Product) {
+  return {
+    name: product.name,
+    slug: product.slug,
+    category: product.category,
+    description: product.description,
+    price: product.price,
+    originalPrice: product.originalPrice ?? null,
+    rating: product.rating,
+    reviewCount: product.reviewCount,
+    images: product.images,
+    sizes: product.sizes ?? [],
+    tags: product.tags ?? [],
+    details: product.details ?? [],
+    colors: (product.colors ?? undefined) as Prisma.InputJsonValue,
+    specifications: (product.specifications ?? undefined) as Prisma.InputJsonValue,
+    featured: product.featured ?? false,
+    newArrival: product.newArrival ?? false,
+    inStock: product.inStock,
+  };
 }
 
 export async function countSheetProducts(): Promise<number> {
@@ -176,8 +203,4 @@ export async function countSheetProducts(): Promise<number> {
   } catch {
     return 0;
   }
-}
-
-export async function clearSheetProducts() {
-  await db().product.deleteMany({ where: { source: "sheet" } });
 }
