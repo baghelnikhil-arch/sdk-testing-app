@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { authErrorResponse } from "@/lib/auth";
-import { requireAdminEndUserId } from "@/lib/end-user";
+import { requireEndUserId } from "@/lib/end-user";
 import { ViasocketNotConfiguredError, embedToken } from "@/lib/viasocket";
 
 /**
@@ -8,10 +8,13 @@ import { ViasocketNotConfiguredError, embedToken } from "@/lib/viasocket";
  *
  * This is the one token the browser is allowed to hold, and only for the
  * duration of the connect popup. The signing secret never leaves the server.
+ *
+ * It is signed for whoever is asking, so a customer connecting their own order
+ * sheet gets their own viaSocket identity and can never see the shop's.
  */
 export async function GET() {
   try {
-    const endUserId = await requireAdminEndUserId();
+    const endUserId = await requireEndUserId();
     return new NextResponse(embedToken(endUserId), {
       headers: {
         "Content-Type": "text/plain; charset=utf-8",

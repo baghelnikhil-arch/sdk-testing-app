@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
-import { authErrorResponse, getCurrentUser, requireAdmin } from "@/lib/auth";
+import { authErrorResponse, getCurrentUser } from "@/lib/auth";
+import { requireOwner } from "@/lib/end-user";
 import {
   clearConnection,
   findSheetConflict,
-  getAdminConnection,
+  getConnection,
   patchConnection,
 } from "@/lib/integration-store";
 import { purposeFromSearch } from "@/lib/purpose";
@@ -30,11 +31,14 @@ export async function GET(request: Request) {
 
   // A missing store is reported, not thrown: the settings page should explain
   // the problem rather than render an error.
+  // The catalogue belongs to the shop; an order sheet belongs to whoever is
+  // signed in. Nobody is ever shown somebody else's.
+  const mayHold = user && (purpose === "orders" || user.role === "admin");
+
   let connection = null;
   let storageError: string | null = null;
   try {
-    connection =
-      user?.role === "admin" ? await getAdminConnection(user, purpose) : null;
+    connection = mayHold ? await getConnection(user.id, purpose) : null;
   } catch (error) {
     storageError = (error as Error).message;
   }
@@ -54,7 +58,7 @@ export async function GET(request: Request) {
         connection.subscriptionId,
       );
       if (!watching) {
-        await patchConnection(connection.endUserId, purpose, {
+        await patchConnection(connection.userId, purpose, {
           subscriptionId: undefined,
           webhookToken: undefined,
         });
@@ -67,6 +71,7 @@ export async function GET(request: Request) {
 
   return NextResponse.json({
     configured: isConfigured(),
+    signedIn: Boolean(user),
     storage,
     storageError,
     connected: Boolean(connection),
@@ -83,84 +88,97 @@ export async function GET(request: Request) {
 
 /** Stores the spreadsheet and tab the user picked. */
 export async function PUT(request: Request) {
-  const purpose = purposeFromSearch(request.url);
-  if (!purpose) {
-    return NextResponse.json({ error: "Unknown purpose" }, { status: 400 });
-  }
-
-  const admin = await requireAdmin();
-  const existing = await getAdminConnection(admin, purpose);
-  const { spreadsheetId, spreadsheetLabel, sheetId, sheetLabel } =
-    await request.json();
-
-  if (typeof spreadsheetId !== "string" || typeof sheetId !== "string") {
-    return NextResponse.json(
-      { error: "Pick both a spreadsheet and a tab." },
-      { status: 400 },
-    );
-  }
-
-  const conflict = await findSheetConflict(purpose, spreadsheetId, sheetId);
-  if (conflict) {
-    return NextResponse.json(
-      {
-        error:
-          purpose === "catalogue"
-            ? "That sheet is already where orders are written. Reading products from the order log would re-import your orders as products. Pick a different sheet."
-            : "That sheet is already the product source. Writing orders into it would corrupt your catalogue. Pick a different sheet.",
-      },
-      { status: 409 },
-    );
-  }
-
-  if (!existing) {
-    return NextResponse.json(
-      { error: "Google Sheets is not connected yet." },
-      { status: 409 },
-    );
-  }
-
-  const updated = await patchConnection(existing.endUserId, purpose, {
-    spreadsheetId,
-    spreadsheetLabel: String(spreadsheetLabel ?? spreadsheetId),
-    sheetId,
-    sheetLabel: String(sheetLabel ?? sheetId),
-  });
-
-  if (!updated) {
-    return NextResponse.json(
-      { error: "Google Sheets is not connected yet." },
-      { status: 409 },
-    );
-  }
-
-  /*
-   * Choosing a product sheet imports it straight away.
-   *
-   * Without this the shop sits empty between saving the sheet and remembering
-   * to press Import, which reads as "my products disappeared" — especially
-   * after a reconnect, where disconnecting has just removed them. A failure
-   * here is reported but does not fail the save: the sheet is chosen either
-   * way, and Import now is still there to retry.
-   */
-  let imported: number | null = null;
-  let syncError: string | null = null;
-
-  if (purpose === "catalogue") {
-    try {
-      imported = (await syncCatalogue(updated)).imported;
-    } catch (error) {
-      syncError = (error as Error).message;
+  try {
+    const purpose = purposeFromSearch(request.url);
+    if (!purpose) {
+      return NextResponse.json({ error: "Unknown purpose" }, { status: 400 });
     }
-  }
 
-  return NextResponse.json({
-    ready: true,
-    spreadsheetLabel: updated.spreadsheetLabel,
-    sheetLabel: updated.sheetLabel,
-    imported,
-    syncError,
-  });
+    const owner = await requireOwner(purpose);
+    const existing = await getConnection(owner.id, purpose);
+    const { spreadsheetId, spreadsheetLabel, sheetId, sheetLabel } =
+      await request.json();
+
+    if (typeof spreadsheetId !== "string" || typeof sheetId !== "string") {
+      return NextResponse.json(
+        { error: "Pick both a spreadsheet and a tab." },
+        { status: 400 },
+      );
+    }
+
+    const conflict = await findSheetConflict(purpose, spreadsheetId, sheetId);
+    if (conflict) {
+      return NextResponse.json(
+        {
+          error:
+            purpose === "catalogue"
+              ? "That sheet is already where orders are written. Reading products from the order log would re-import your orders as products. Pick a different sheet."
+              : "That sheet is already the product source. Writing orders into it would corrupt your catalogue. Pick a different sheet.",
+        },
+        { status: 409 },
+      );
+    }
+
+    if (!existing) {
+      return NextResponse.json(
+        { error: "Google Sheets is not connected yet." },
+        { status: 409 },
+      );
+    }
+
+    const updated = await patchConnection(existing.userId, purpose, {
+      spreadsheetId,
+      spreadsheetLabel: String(spreadsheetLabel ?? spreadsheetId),
+      sheetId,
+      sheetLabel: String(sheetLabel ?? sheetId),
+    });
+
+    if (!updated) {
+      return NextResponse.json(
+        { error: "Google Sheets is not connected yet." },
+        { status: 409 },
+      );
+    }
+
+    /*
+     * Choosing a product sheet imports it straight away.
+     *
+     * Without this the shop sits empty between saving the sheet and remembering
+     * to press Import, which reads as "my products disappeared" — especially
+     * after a reconnect, where disconnecting has just removed them. A failure
+     * here is reported but does not fail the save: the sheet is chosen either
+     * way, and Import now is still there to retry.
+     */
+    let imported: number | null = null;
+    let syncError: string | null = null;
+
+    if (purpose === "catalogue") {
+      try {
+        imported = (await syncCatalogue(updated)).imported;
+      } catch (error) {
+        syncError = (error as Error).message;
+      }
+    }
+
+    return NextResponse.json({
+      ready: true,
+      spreadsheetLabel: updated.spreadsheetLabel,
+      sheetLabel: updated.sheetLabel,
+      imported,
+      syncError,
+    });
+  } catch (error) {
+    // Without this, a customer poking at the catalogue got a bare 500
+    // instead of being told plainly that it is not theirs to change.
+    const denied = authErrorResponse(error);
+    if (denied) {
+      return NextResponse.json({ error: denied.error }, { status: denied.status });
+    }
+    if (error instanceof ViasocketNotConfiguredError) {
+      return NextResponse.json({ error: error.message }, { status: 503 });
+    }
+    return NextResponse.json({ error: (error as Error).message }, { status: 500 });
+  }
 }
 
 /**
@@ -177,8 +195,8 @@ export async function DELETE(request: Request) {
   }
 
   try {
-    const admin = await requireAdmin();
-    const connection = await getAdminConnection(admin, purpose);
+    const owner = await requireOwner(purpose);
+    const connection = await getConnection(owner.id, purpose);
     if (!connection) return NextResponse.json({ connected: false });
     const endUserId = connection.endUserId;
 
@@ -188,7 +206,7 @@ export async function DELETE(request: Request) {
     }
     await setFlowStatus(endUserId, connection.scriptId, 0).catch(() => {});
     await revokeConnection(endUserId, connection.authId);
-    await clearConnection(endUserId, purpose);
+    await clearConnection(connection.userId, purpose);
 
     /*
      * Imported products stay.

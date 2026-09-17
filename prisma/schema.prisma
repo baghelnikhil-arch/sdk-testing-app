@@ -18,15 +18,16 @@ datasource db {
 model Connection {
   id        String @id @default(cuid())
 
-  /// viaSocket's `unique_identifier`. Stable for the life of the connection —
-  /// changing it makes viaSocket treat the owner as a different person and the
-  /// connection appears lost. It is therefore NOT the app's user id.
-  endUserId String
+  /// Who owns this connection. The shop's own user id, and the only thing a
+  /// connection is ever looked up by.
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  /// Who owns this connection in the shop. Null means it predates accounts and
-  /// is waiting to be claimed by the first administrator.
-  userId String?
-  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  /// viaSocket's `unique_identifier` for that owner — their `viasocketId`, not
+  /// their user id. Stored because every viaSocket call needs it, never used to
+  /// find a connection: changing it makes viaSocket treat the owner as somebody
+  /// else and every connection they made appears lost.
+  endUserId String
   /// "orders" | "catalogue"
   purpose   String
 
@@ -58,7 +59,8 @@ model Connection {
 
   updatedAt DateTime @updatedAt
 
-  @@unique([endUserId, purpose])
+  @@unique([userId, purpose])
+  @@index([endUserId])
   @@index([spreadsheetId, sheetId])
   @@index([userId])
 }

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { authErrorResponse, requireAdmin } from "@/lib/auth";
-import { getAdminConnection } from "@/lib/integration-store";
+import { authErrorResponse } from "@/lib/auth";
+import { requireOwner } from "@/lib/end-user";
+import { getConnection } from "@/lib/integration-store";
 import { parsePurpose } from "@/lib/purpose";
 import {
   ADD_ROWS_ACTION,
@@ -26,7 +27,6 @@ const SOURCES = {
 
 export async function POST(request: Request) {
   try {
-    const admin = await requireAdmin();
     const { field, spreadsheetId, purpose: rawPurpose } = await request.json();
     const purpose = parsePurpose(rawPurpose);
 
@@ -40,7 +40,8 @@ export async function POST(request: Request) {
       );
     }
 
-    const connection = await getAdminConnection(admin, purpose);
+    const owner = await requireOwner(purpose);
+    const connection = await getConnection(owner.id, purpose);
     if (!connection) {
       return NextResponse.json(
         { error: "Google Sheets is not connected yet." },

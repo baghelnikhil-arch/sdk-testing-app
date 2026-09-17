@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { NextResponse } from "next/server";
 import { authErrorResponse, requireAdmin } from "@/lib/auth";
-import { getAdminConnection, patchConnection } from "@/lib/integration-store";
+import { getConnection, patchConnection } from "@/lib/integration-store";
 import {
   FIELDS,
   ROW_ADDED_TRIGGER,
@@ -72,7 +72,7 @@ function resolvePublicBaseUrl(): { origin: string } | { error: string } {
 export async function POST() {
   try {
     const admin = await requireAdmin();
-    const connection = await getAdminConnection(admin, "catalogue");
+    const connection = await getConnection(admin.id, "catalogue");
 
     if (!connection?.spreadsheetId || !connection?.sheetId) {
       return NextResponse.json(
@@ -121,7 +121,7 @@ export async function POST() {
     // The subscription script_id is the only handle to it — the flows listing
     // cannot tell a subscription from an enabled app — so it is stored before
     // anything else can fail.
-    await patchConnection(connection.endUserId, "catalogue", {
+    await patchConnection(connection.userId, "catalogue", {
       subscriptionId,
       webhookToken,
     });
@@ -142,13 +142,13 @@ export async function POST() {
 export async function DELETE() {
   try {
     const admin = await requireAdmin();
-    const connection = await getAdminConnection(admin, "catalogue");
+    const connection = await getConnection(admin.id, "catalogue");
 
     if (connection?.subscriptionId) {
       await setFlowStatus(connection.endUserId, connection.subscriptionId, 0);
     }
     if (connection) {
-      await patchConnection(connection.endUserId, "catalogue", {
+      await patchConnection(connection.userId, "catalogue", {
         subscriptionId: undefined,
         webhookToken: undefined,
       });

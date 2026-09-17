@@ -19,6 +19,8 @@ export type Purpose = "orders" | "catalogue";
 
 export type SheetsStatus = {
   configured: boolean;
+  /** Connections hang off an account, so there is nothing to offer a guest. */
+  signedIn: boolean;
   /** "database" when Postgres is reachable, "none" when DATABASE_URL is unset. */
   storage?: "database" | "none";
   storageError?: string | null;

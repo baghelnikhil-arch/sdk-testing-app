@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { authErrorResponse, requireAdmin } from "@/lib/auth";
-import { getAdminConnection, patchConnection } from "@/lib/integration-store";
+import { getConnection, patchConnection } from "@/lib/integration-store";
 import { SYNC_INTERVALS } from "@/lib/sync-intervals";
 
 /**
@@ -14,7 +14,7 @@ import { SYNC_INTERVALS } from "@/lib/sync-intervals";
 export async function POST(request: Request) {
   try {
     const admin = await requireAdmin();
-    const connection = await getAdminConnection(admin, "catalogue");
+    const connection = await getConnection(admin.id, "catalogue");
 
     if (!connection) {
       return NextResponse.json(
@@ -32,7 +32,7 @@ export async function POST(request: Request) {
       );
     }
 
-    await patchConnection(connection.endUserId, "catalogue", {
+    await patchConnection(connection.userId, "catalogue", {
       syncIntervalMinutes: minutes ?? undefined,
     });
 

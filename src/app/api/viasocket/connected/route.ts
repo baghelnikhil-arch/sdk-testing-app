@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { authErrorResponse } from "@/lib/auth";
-import { requireAdminEndUserId } from "@/lib/end-user";
+import { requireOwner } from "@/lib/end-user";
 import { getConnection, saveConnection } from "@/lib/integration-store";
 import { parsePurpose } from "@/lib/purpose";
 import {
@@ -21,7 +21,6 @@ import {
  */
 export async function POST(request: Request) {
   try {
-    const endUserId = await requireAdminEndUserId();
     const body = await request.json();
     const purpose = parsePurpose(body.purpose);
 
@@ -38,15 +37,16 @@ export async function POST(request: Request) {
       );
     }
 
-    const previous = await getConnection(endUserId, purpose);
-    const scriptId = await ensureEnabled(endUserId, body.authId);
+    const owner = await requireOwner(purpose);
+    const previous = await getConnection(owner.id, purpose);
+    const scriptId = await ensureEnabled(owner.viasocketId, body.authId);
 
     // Reconnecting with a different Google account invalidates the saved sheet:
     // those ids live in the old account's Drive and would either fail or, worse,
     // resolve to something unrelated.
     const destinationCleared = Boolean(previous && previous.authId !== body.authId);
 
-    const record = await saveConnection(endUserId, purpose, {
+    const record = await saveConnection(owner, purpose, {
       authId: body.authId,
       scriptId,
       ...(destinationCleared

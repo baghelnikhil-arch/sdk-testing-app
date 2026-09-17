@@ -62,24 +62,13 @@ async function main() {
     },
   });
 
-  /*
-   * Connections made before accounts existed, or orphaned when their owner was
-   * deleted, are adopted here so the Google Sheets setup is reachable again
-   * without reconnecting it.
-   */
-  const { count } = await prisma.connection.updateMany({
-    where: { userId: null },
-    data: { userId: user.id },
-  });
-
   console.log("");
   console.log(existing ? "Promoted to admin:" : "Admin account created:");
   console.log("  email    ", user.email);
   console.log("  password ", password);
   console.log("  role     ", user.role);
-  if (count > 0) console.log(`  adopted ${count} unowned Google Sheets connection(s)`);
   console.log("");
-  console.log("Sign in at /login, then open /settings/integrations.");
+  console.log("Sign in at /login, then open /admin.");
   console.log("");
 }
 

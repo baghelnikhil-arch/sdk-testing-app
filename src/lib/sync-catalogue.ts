@@ -52,7 +52,7 @@ export async function autoSyncIfDue(): Promise<void> {
   if (Date.now() - last < minutes * 60_000) return;
 
   // Only the request that wins the claim does the work.
-  if (!(await claimSync(connection.endUserId, "catalogue", connection.lastSyncAt))) {
+  if (!(await claimSync(connection.userId, "catalogue", connection.lastSyncAt))) {
     return;
   }
 
@@ -157,7 +157,7 @@ export async function syncCatalogue(
     { prune },
   );
 
-  await patchConnection(connection.endUserId, "catalogue", {
+  await patchConnection(connection.userId, "catalogue", {
     lastSyncAt: new Date().toISOString(),
     lastSyncCount: kept.length,
   });

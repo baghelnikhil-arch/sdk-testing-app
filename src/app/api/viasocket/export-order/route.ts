@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireUser, authErrorResponse } from "@/lib/auth";
-import { getShopConnection, patchConnection } from "@/lib/integration-store";
+import { getConnection, patchConnection } from "@/lib/integration-store";
 import {
   ADD_ROWS_ACTION,
   FIELD_SHEET,
@@ -61,8 +61,14 @@ export async function POST(request: Request) {
   });
   await clearCart(user.id);
 
-  // The shop exports through its own connection; customers have none.
-  const integration = await getShopConnection("orders");
+  /*
+   * Each shopper exports to their own sheet.
+   *
+   * The connection is looked up under the person placing the order, so one
+   * customer's orders can never be written into another's spreadsheet, and
+   * someone who has connected nothing simply gets an order without an export.
+   */
+  const integration = await getConnection(user.id, "orders");
   if (!integration?.spreadsheetId || !integration?.sheetId) {
     return NextResponse.json({
       ordered: true,
@@ -87,7 +93,7 @@ export async function POST(request: Request) {
       rows_json: JSON.stringify(rows),
     });
 
-    await patchConnection(integration.endUserId, "orders", {
+    await patchConnection(integration.userId, "orders", {
       lastExportAt: new Date().toISOString(),
     });
     await markOrderExported(order.id, true);

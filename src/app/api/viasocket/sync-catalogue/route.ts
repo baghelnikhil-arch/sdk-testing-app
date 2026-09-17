@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { authErrorResponse, requireAdmin } from "@/lib/auth";
-import { getAdminConnection } from "@/lib/integration-store";
+import { getConnection } from "@/lib/integration-store";
 import { syncCatalogue } from "@/lib/sync-catalogue";
 import { ViasocketNotConfiguredError } from "@/lib/viasocket";
 
@@ -8,7 +8,7 @@ import { ViasocketNotConfiguredError } from "@/lib/viasocket";
 export async function POST() {
   try {
     const admin = await requireAdmin();
-    const connection = await getAdminConnection(admin, "catalogue");
+    const connection = await getConnection(admin.id, "catalogue");
 
     if (!connection) {
       return NextResponse.json(

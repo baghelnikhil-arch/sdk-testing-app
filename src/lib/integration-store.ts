@@ -3,8 +3,13 @@ import { db } from "./db";
 /**
  * Integration state, in Postgres.
  *
- * Rows are keyed by (endUserId, purpose), so two concurrent requests for two
- * different people — or for one person's two connections — never contend.
+ * Every connection belongs to an account, and `(userId, purpose)` is the only
+ * way one is ever found. It used to be keyed on viaSocket's `endUserId`, which
+ * is a different identifier owned by a different system: connections made in
+ * two browsers landed under two identities, one account could end up holding
+ * several rows for the same purpose, and deciding which of them was "the" one
+ * took a fallback chain that nobody could predict. Now there is exactly one row
+ * per account per purpose, and the database enforces it.
  *
  * `scriptId` is a credential: anyone holding it can run Google Sheets as this
  * user. It stays server-side and is never returned to the browser.
@@ -18,8 +23,13 @@ import { db } from "./db";
 export type Purpose = "orders" | "catalogue";
 export const PURPOSES: Purpose[] = ["orders", "catalogue"];
 
+/** An account, as this module needs to see one. */
+export type Owner = { id: string; viasocketId: string };
+
 export type Connection = {
-  /** viaSocket's `unique_identifier` for whoever owns this connection. */
+  /** The shop's own user id. What this connection is keyed by. */
+  userId: string;
+  /** viaSocket's `unique_identifier` for the owner. What viaSocket is called with. */
   endUserId: string;
   authId: string;
   scriptId: string;
@@ -38,6 +48,7 @@ export type Connection = {
 };
 
 type Row = {
+  userId: string;
   endUserId: string;
   authId: string;
   scriptId: string;
@@ -57,6 +68,7 @@ type Row = {
 /** Nulls are a database detail; the rest of the app works in optionals. */
 function toConnection(row: Row): Connection {
   return {
+    userId: row.userId,
     endUserId: row.endUserId,
     authId: row.authId,
     scriptId: row.scriptId,
@@ -86,7 +98,7 @@ function toColumns(patch: Partial<Connection>) {
   const data: Record<string, unknown> = {};
 
   for (const [key, value] of Object.entries(patch)) {
-    if (key === "connectedAt" || key === "endUserId") continue;
+    if (key === "connectedAt" || key === "userId" || key === "endUserId") continue;
     if ((DATE_FIELDS as readonly string[]).includes(key)) {
       data[key] = value ? new Date(value as string) : null;
       continue;
@@ -96,39 +108,33 @@ function toColumns(patch: Partial<Connection>) {
   return data;
 }
 
+const key = (userId: string, purpose: Purpose) => ({
+  userId_purpose: { userId, purpose },
+});
+
 export async function getConnection(
-  endUserId: string,
+  userId: string,
   purpose: Purpose,
 ): Promise<Connection | null> {
-  const row = await db().connection.findUnique({
-    where: { endUserId_purpose: { endUserId, purpose } },
-  });
+  const row = await db().connection.findUnique({ where: key(userId, purpose) });
   return row ? toConnection(row) : null;
-}
-
-export async function getConnections(
-  endUserId: string,
-): Promise<Partial<Record<Purpose, Connection>>> {
-  const rows = await db().connection.findMany({ where: { endUserId } });
-  return Object.fromEntries(
-    rows.map((row) => [row.purpose as Purpose, toConnection(row)]),
-  );
 }
 
 /** Creates the connection, or merges into it when one already exists. */
 export async function saveConnection(
-  endUserId: string,
+  owner: Owner,
   purpose: Purpose,
   patch: Partial<Connection> & Pick<Connection, "authId" | "scriptId">,
 ): Promise<Connection> {
   const columns = toColumns(patch);
 
   const row = await db().connection.upsert({
-    where: { endUserId_purpose: { endUserId, purpose } },
+    where: key(owner.id, purpose),
     // connectedAt defaults on insert and is never touched again, so it records
     // when this account was first linked rather than when it last changed.
     create: {
-      endUserId,
+      userId: owner.id,
+      endUserId: owner.viasocketId,
       purpose,
       authId: patch.authId,
       scriptId: patch.scriptId,
@@ -142,13 +148,13 @@ export async function saveConnection(
 
 /** Updates a connection that must already exist; returns null if it does not. */
 export async function patchConnection(
-  endUserId: string,
+  userId: string,
   purpose: Purpose,
   patch: Partial<Connection>,
 ): Promise<Connection | null> {
   try {
     const row = await db().connection.update({
-      where: { endUserId_purpose: { endUserId, purpose } },
+      where: key(userId, purpose),
       data: toColumns(patch),
     });
     return toConnection(row);
@@ -167,13 +173,13 @@ export async function patchConnection(
  * that hangs or throws does not invite a retry on every single page view.
  */
 export async function claimSync(
-  endUserId: string,
+  userId: string,
   purpose: Purpose,
   seenAt: string | undefined,
 ): Promise<boolean> {
   const { count } = await db().connection.updateMany({
     where: {
-      endUserId,
+      userId,
       purpose,
       lastSyncAt: seenAt ? new Date(seenAt) : null,
     },
@@ -182,11 +188,9 @@ export async function claimSync(
   return count === 1;
 }
 
-export async function clearConnection(endUserId: string, purpose: Purpose) {
+export async function clearConnection(userId: string, purpose: Purpose) {
   await db()
-    .connection.delete({
-      where: { endUserId_purpose: { endUserId, purpose } },
-    })
+    .connection.delete({ where: key(userId, purpose) })
     .catch(() => null);
 }
 
@@ -198,69 +202,34 @@ export async function clearConnection(endUserId: string, purpose: Purpose) {
  */
 export async function findByWebhookToken(
   token: string,
-): Promise<{ endUserId: string; connection: Connection } | null> {
+): Promise<{ connection: Connection } | null> {
   if (!token) return null;
 
   const row = await db().connection.findUnique({ where: { webhookToken: token } });
   if (!row || row.purpose !== "catalogue") return null;
 
-  return { endUserId: row.endUserId, connection: toConnection(row) };
-}
-
-/**
- * The connection an administrator manages for a purpose.
- *
- * Ownership is the app's own `userId`, which is not the same as viaSocket's
- * `endUserId`: a connection made before accounts existed keeps its original
- * viaSocket identity forever — changing it would make viaSocket treat it as
- * somebody else's — and gains an owner when an administrator adopts it. So the
- * owner is tried first, and the caller's own viaSocket identity second, which is
- * what a connection they made themselves will match.
- */
-export async function getAdminConnection(
-  user: { id: string; viasocketId: string },
-  purpose: Purpose,
-): Promise<Connection | null> {
-  /*
-   * Adopting older connections can leave an administrator owning more than one
-   * for a purpose — a half-finished attempt next to the real thing. A configured
-   * sheet is what makes one usable, so those win; only if none is configured
-   * does the most recent unconfigured one stand in, so the settings screen can
-   * still offer to finish it.
-   */
-  const configured = await db().connection.findFirst({
-    where: {
-      userId: user.id,
-      purpose,
-      spreadsheetId: { not: null },
-      sheetId: { not: null },
-    },
-    orderBy: { updatedAt: "desc" },
-  });
-  if (configured) return toConnection(configured);
-
-  const owned = await db().connection.findFirst({
-    where: { userId: user.id, purpose },
-    orderBy: { updatedAt: "desc" },
-  });
-  if (owned) return toConnection(owned);
-
-  return getConnection(user.viasocketId, purpose);
+  return { connection: toConnection(row) };
 }
 
 /**
  * The connection the shop itself uses for a purpose.
  *
  * There is one storefront, so an order placed by any customer is exported
- * through the administrator's connection — not the shopper's, who has none.
- * Claimed connections win over unclaimed leftovers from before accounts existed.
+ * through an administrator's connection — not the shopper's, who has none — and
+ * the catalogue every visitor sees is imported through one too. Only a
+ * configured connection counts: one without a sheet cannot do anything.
  */
 export async function getShopConnection(
   purpose: Purpose,
 ): Promise<Connection | null> {
   const row = await db().connection.findFirst({
-    where: { purpose, spreadsheetId: { not: null }, sheetId: { not: null } },
-    orderBy: [{ userId: "desc" }, { updatedAt: "desc" }],
+    where: {
+      purpose,
+      spreadsheetId: { not: null },
+      sheetId: { not: null },
+      user: { role: "admin" },
+    },
+    orderBy: { updatedAt: "desc" },
   });
   return row ? toConnection(row) : null;
 }
@@ -271,8 +240,8 @@ export async function getShopConnection(
  * Reading products from the sheet the shop writes orders to creates a loop:
  * every order appends a row, the row trigger fires, the catalogue re-imports
  * from the order log, and the shop fills with nonsense or empties entirely.
- * Searches across all users, because the two connections are frequently made in
- * different browsers and so belong to different demo identities.
+ * Searches across all accounts, because the two connections may well be made by
+ * different administrators.
  */
 export async function findSheetConflict(
   purpose: Purpose,

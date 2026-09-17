@@ -2,7 +2,6 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
 import {
   createSession,
   createUser,
@@ -32,17 +31,6 @@ function safeNext(next: string) {
 }
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-/**
- * Connections made before accounts existed have no owner. The shop has one
- * administrator, so the first admin to sign in adopts them — otherwise a
- * working Google Sheets setup would be stranded and have to be rebuilt.
- */
-async function claimOrphanConnections(userId: string) {
-  await db()
-    .connection.updateMany({ where: { userId: null }, data: { userId } })
-    .catch(() => null);
-}
 
 export async function signup(
   _prev: AuthState | undefined,
@@ -77,7 +65,6 @@ export async function signup(
   }
 
   await createSession(user.id);
-  if (user.role === "admin") await claimOrphanConnections(user.id);
 
   revalidatePath("/", "layout");
   redirect(safeNext(next));
@@ -109,7 +96,6 @@ export async function login(
   }
 
   await createSession(user.id);
-  if (user.role === "admin") await claimOrphanConnections(user.id);
 
   revalidatePath("/", "layout");
   redirect(safeNext(next));
